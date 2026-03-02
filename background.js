@@ -45,6 +45,22 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     console.log('Background received message:', message.type);
 
     switch (message.type) {
+        case 'DOWNLOAD_FILE':
+            chrome.downloads.download(
+                {
+                    url: message.url,
+                    conflictAction: 'uniquify'
+                },
+                (downloadId) => {
+                    if (chrome.runtime.lastError) {
+                        console.error('Download failed:', message.url, chrome.runtime.lastError.message);
+                        return;
+                    }
+                    console.log('Download started:', downloadId, message.url);
+                }
+            );
+            break;
+
         case 'CLICK_CAPTURED':
             if (isCapturing) {
                 const clickData = message.data;

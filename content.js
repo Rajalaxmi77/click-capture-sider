@@ -2,6 +2,81 @@ console.log('Click Capture content script loaded');
 
 // Initialize click tracking
 let isCapturing = true;
+let lastSelectedDocument = null;
+const selectedDocumentIds = new Set();
+
+function normalizeUrl(url) {
+    if (!url) return '';
+    try {
+        return new URL(url, window.location.href).href;
+    } catch (error) {
+        return '';
+    }
+}
+
+function getDatasetUrl(element) {
+    if (!element || !element.dataset) return '';
+    const urlKeys = ['url', 'href', 'downloadUrl', 'downloadurl', 'fileUrl', 'fileurl', 'link'];
+
+    for (const key of urlKeys) {
+        if (element.dataset[key]) {
+            return normalizeUrl(element.dataset[key]);
+        }
+    }
+
+    for (const key of Object.keys(element.dataset)) {
+        if (key.toLowerCase().includes('url') || key.toLowerCase().includes('href')) {
+            return normalizeUrl(element.dataset[key]);
+        }
+    }
+
+    return '';
+}
+
+function getDocumentContainer(element) {
+    if (!element || !element.closest) return null;
+    return element.closest('[id^="list-item-doc-"], [id^="list-item-folder-"]');
+}
+
+function getDocumentId(element) {
+    const container = getDocumentContainer(element);
+    if (!container || !container.id) return '';
+
+    const docMatch = container.id.match(/^list-item-doc-(\d+)$/);
+    if (docMatch) return docMatch[1];
+
+    const folderMatch = container.id.match(/^list-item-folder-(\d+)$/);
+    if (folderMatch) return folderMatch[1];
+
+    return '';
+}
+
+function resolveTargetUrl(target) {
+    const directAnchor = target.closest && target.closest('a[href]');
+    if (directAnchor) {
+        return normalizeUrl(directAnchor.getAttribute('href') || directAnchor.href || '');
+    }
+
+    const targetHref = normalizeUrl(target.href || target.getAttribute?.('href') || '');
+    if (targetHref) return targetHref;
+
+    const targetDataUrl = getDatasetUrl(target);
+    if (targetDataUrl) return targetDataUrl;
+
+    const container = getDocumentContainer(target) || target;
+
+    const preferredLink = container.querySelector?.(
+        'a[href$=".pdf"], a[href*=".pdf?"], a[download], a[href*="/download"], a[href*="download"], a[href]'
+    );
+    if (preferredLink) {
+        return normalizeUrl(preferredLink.getAttribute('href') || preferredLink.href || '');
+    }
+
+    const containerDataUrl = getDatasetUrl(container);
+    if (containerDataUrl) return containerDataUrl;
+
+    return '';
+}
 
 // Function to get element type
 function getElementType(element) {
@@ -106,22 +181,16 @@ document.addEventListener('click', function(event) {
     const target = event.target;
     const elementType = getElementType(target);
     
-    // Get the target URL - try to get the href from the clicked element or its parent anchor
-    let targetUrl = '';
-    let clickedElement = target;
-    
-    // Check if clicked element or any parent is an anchor tag
-    while (clickedElement && clickedElement !== document.body) {
-        if (clickedElement.tagName === 'A') {
-            targetUrl = clickedElement.href || clickedElement.getAttribute('href') || '';
-            break;
-        }
-        clickedElement = clickedElement.parentElement;
-    }
-    
-    // Also check if the clicked element itself has href
-    if (!targetUrl) {
-        targetUrl = target.href || target.getAttribute('href') || '';
+    const targetUrl = resolveTargetUrl(target);
+    const documentId = getDocumentId(target);
+
+    if (documentId) {
+        lastSelectedDocument = {
+            documentId: documentId,
+            pageUrl: window.location.href,
+            selectedAt: Date.now()
+        };
+        selectedDocumentIds.add(documentId);
     }
     
     // Prepare basic click data
@@ -132,6 +201,8 @@ document.addEventListener('click', function(event) {
         classes: target.className || '',
         id: target.id || '',
         href: targetUrl,
+        downloadUrl: targetUrl,
+        documentId: documentId,
         src: target.src || target.getAttribute('src') || '',
         alt: target.alt || target.getAttribute('alt') || '',
         title: target.title || target.getAttribute('title') || '',
@@ -195,6 +266,7 @@ function checkUrlChange() {
         console.log('URL changed from', lastUrl, 'to', currentUrl);
         const oldUrl = lastUrl;
         lastUrl = currentUrl;
+        selectedDocumentIds.clear();
         
         try {
             chrome.runtime.sendMessage({
@@ -235,6 +307,73 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         });
         return true;
     }
+
+    // for downloading files based on user selection in the side panel
+    if (message.type === 'DOWNLOAD_ALL_FILES') {
+        const selectedIds = getAllSelectedDocumentIds();
+
+        if (selectedIds.length > 1) {
+            const perDocResults = [];
+            (async () => {
+                for (const id of selectedIds) {
+                    const singleResult = await downloadDocumentById(id, window.location.href);
+                    perDocResults.push({
+                        id,
+                        ok: !!singleResult?.ok,
+                        error: singleResult?.error || ''
+                    });
+                }
+
+                const successCount = perDocResults.filter((r) => r.ok).length;
+                sendResponse({
+                    ok: successCount > 0,
+                    mode: 'loop_single_download',
+                    requested: selectedIds.length,
+                    succeeded: successCount,
+                    failed: selectedIds.length - successCount,
+                    details: perDocResults
+                });
+            })();
+            return true;
+        }
+
+        if (selectedIds.length === 1) {
+            downloadDocumentById(selectedIds[0], window.location.href).then((result) => {
+                sendResponse({
+                    mode: 'selected_document',
+                    ...result
+                });
+            });
+            return true;
+        }
+
+        // If user selected a specific Filevine document row, download only that file.
+        if (lastSelectedDocument && lastSelectedDocument.documentId) {
+            downloadDocumentById(
+                lastSelectedDocument.documentId,
+                lastSelectedDocument.pageUrl || window.location.href
+            ).then((result) => {
+                sendResponse({
+                    mode: 'selected_document',
+                    ...result
+                });
+            });
+            return true;
+        }
+
+        const urls = downloadAllFilesOnPage();
+        sendResponse({
+            mode: 'page_scan',
+            ok: urls.length > 0,
+            count: urls.length
+        });
+        return true;
+    }
+
+    if (message.type === 'DOWNLOAD_DOCUMENT_BY_ID') {
+        downloadDocumentById(message.documentId, message.pageUrl).then(sendResponse);
+        return true;
+    }
     
     return true;
 });
@@ -249,5 +388,328 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
+
+function downloadAllFilesOnPage() {
+    // Run once in the top frame to avoid duplicate scans in all_frames mode.
+    if (window.top !== window) return [];
+
+    const filePattern = /\.(pdf|doc|docx|xlsx|xls|png|jpe?g|csv|txt|zip)(?:$|[?#])/i;
+    const downloadHintPattern = /(\/download\b|[?&](download|attachment|filename|response-content-disposition|docid)=)/i;
+    const candidateUrls = new Set();
+
+    function maybeAddUrl(rawUrl) {
+        const url = normalizeUrl(rawUrl);
+        if (!url) return;
+        if (filePattern.test(url) || downloadHintPattern.test(url)) {
+            candidateUrls.add(url);
+        }
+    }
+
+    document.querySelectorAll('a[href], [data-url], [data-href], [data-file-url], [data-download-url], [src]').forEach(el => {
+        if (el.hasAttribute('href')) maybeAddUrl(el.getAttribute('href'));
+        if (el.hasAttribute('src')) maybeAddUrl(el.getAttribute('src'));
+
+        const datasetUrl = getDatasetUrl(el);
+        if (datasetUrl) maybeAddUrl(datasetUrl);
+    });
+
+    document.querySelectorAll('[onclick]').forEach(el => {
+        const onclick = el.getAttribute('onclick') || '';
+        const urlMatch = onclick.match(/https?:\/\/[^'" )]+/i);
+        if (urlMatch) maybeAddUrl(urlMatch[0]);
+    });
+
+    const fileUrls = Array.from(candidateUrls);
+    console.log('Found files:', fileUrls);
+
+    fileUrls.forEach(url => {
+        chrome.runtime.sendMessage({
+            type: 'DOWNLOAD_FILE',
+            url: url
+        });
+    });
+
+    return fileUrls;
+}
+
+function extractUrlsFromObject(value, out, depth = 0) {
+    if (!value || depth > 8) return;
+
+    if (typeof value === 'string') {
+        const asUrl = normalizeUrl(value);
+        if (asUrl && /^https?:/i.test(asUrl)) {
+            out.add(asUrl);
+        }
+        return;
+    }
+
+    if (Array.isArray(value)) {
+        value.forEach(item => extractUrlsFromObject(item, out, depth + 1));
+        return;
+    }
+
+    if (typeof value === 'object') {
+        Object.values(value).forEach(item => extractUrlsFromObject(item, out, depth + 1));
+    }
+}
+
+function chooseBestFileUrl(urls, documentId) {
+    const list = Array.from(urls);
+    if (!list.length) return '';
+
+    const score = (url) => {
+        let points = 0;
+        if (/\.pdf(?:$|[?#])/i.test(url)) points += 60;
+        if (/\/download\b/i.test(url)) points += 40;
+        if (new RegExp(`/api/docs/${documentId}/`, 'i').test(url)) points += 35;
+        if (/[?&](docid|id)=/i.test(url)) points += 20;
+        if (/[?&](filename|response-content-disposition)=/i.test(url)) points += 20;
+        if (/\.(js|css|map|html?)(?:$|[?#])/i.test(url)) points -= 100;
+        return points;
+    };
+
+    list.sort((a, b) => score(b) - score(a));
+    return list[0];
+}
+
+function getProjectIdFromUrl(pageUrl) {
+    const source = pageUrl || window.location.href;
+    const match = source.match(/\/project\/(\d+)/i);
+    return match ? match[1] : '';
+}
+
+function getSelectedDocumentIdsFromDom() {
+    const ids = new Set();
+
+    function addIdFromElement(el) {
+        if (!el || !el.id) return;
+        const match = el.id.match(/^list-item-doc-(\d+)$/);
+        if (match) ids.add(match[1]);
+    }
+
+    document.querySelectorAll('li[id^="list-item-doc-"]').forEach((el) => {
+        const isSelected =
+            el.classList.contains('selected') ||
+            el.getAttribute('aria-selected') === 'true' ||
+            el.matches('.active, [data-selected="true"]');
+
+        if (isSelected) addIdFromElement(el);
+    });
+
+    document.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
+        const row = checkbox.closest('li[id^="list-item-doc-"]');
+        addIdFromElement(row);
+    });
+
+    return Array.from(ids);
+}
+
+function getAllSelectedDocumentIds() {
+    const fromDom = getSelectedDocumentIdsFromDom();
+    const merged = new Set([...fromDom, ...selectedDocumentIds]);
+    return Array.from(merged);
+}
+
+function extractDocumentIdFromDetails(payload, fallbackId) {
+    const preferredKeys = new Set(['id', 'docid', 'documentid', 'document_id']);
+
+    function walk(value, depth = 0) {
+        if (!value || depth > 8) return '';
+
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                const found = walk(item, depth + 1);
+                if (found) return found;
+            }
+            return '';
+        }
+
+        if (typeof value === 'object') {
+            for (const [key, item] of Object.entries(value)) {
+                const normalizedKey = key.toLowerCase();
+                if (preferredKeys.has(normalizedKey)) {
+                    const candidate = String(item || '').match(/^\d+$/) ? String(item) : '';
+                    if (candidate) return candidate;
+                }
+            }
+
+            for (const item of Object.values(value)) {
+                const found = walk(item, depth + 1);
+                if (found) return found;
+            }
+        }
+
+        return '';
+    }
+
+    return walk(payload) || String(fallbackId || '');
+}
+
+async function downloadMultipleDocuments(projectId, documentIds, pageUrl) {
+    if (!projectId) {
+        return { ok: false, error: 'Missing project ID' };
+    }
+    if (!documentIds || !documentIds.length) {
+        return { ok: false, error: 'No selected document IDs found' };
+    }
+
+    const origin = (() => {
+        if (pageUrl) {
+            try {
+                return new URL(pageUrl).origin;
+            } catch (error) {
+                // Fall back below.
+            }
+        }
+        return window.location.origin;
+    })();
+
+    const endpoint = `${origin}/api/projects/${projectId}/multidocs/download`;
+    const payloadCandidates = [
+        { documentIds: documentIds },
+        { docIds: documentIds },
+        { ids: documentIds }
+    ];
+
+    let lastError = 'Unknown error';
+
+    for (const body of payloadCandidates) {
+        try {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            });
+
+            if (!res.ok) {
+                lastError = `Multi download API failed (${res.status})`;
+                continue;
+            }
+
+            let urls = [];
+            const contentType = (res.headers.get('content-type') || '').toLowerCase();
+            if (contentType.includes('application/json')) {
+                const payload = await res.json();
+                const out = new Set();
+                extractUrlsFromObject(payload, out);
+                urls = Array.from(out);
+            } else {
+                const textBody = (await res.text()).trim();
+                const maybeUrl = normalizeUrl(textBody);
+                if (maybeUrl && /^https?:/i.test(maybeUrl)) {
+                    urls = [maybeUrl];
+                }
+            }
+
+            if (!urls.length) {
+                lastError = 'Multi download API returned no downloadable URL';
+                continue;
+            }
+
+            urls.forEach((url) => {
+                chrome.runtime.sendMessage({
+                    type: 'DOWNLOAD_FILE',
+                    url: url
+                });
+            });
+
+            return {
+                ok: true,
+                mode: 'multi_download_api',
+                endpoint,
+                count: urls.length
+            };
+        } catch (error) {
+            lastError = error.message || 'Unknown error';
+        }
+    }
+
+    return { ok: false, error: lastError, endpoint };
+}
+
+async function downloadDocumentById(documentId, pageUrl) {
+    if (!documentId) {
+        return { ok: false, error: 'Missing document ID' };
+    }
+
+    const origin = (() => {
+        if (pageUrl) {
+            try {
+                return new URL(pageUrl).origin;
+            } catch (error) {
+                // Fall back below.
+            }
+        }
+        return window.location.origin;
+    })();
+
+    // First fetch details to get the resolved document ID and potential download URLs.
+    const detailsUrl = `${origin}/api/docs/${documentId}/details`;
+    try {
+        const res = await fetch(detailsUrl, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' }
+        });
+
+        if (!res.ok) {
+            return { ok: false, error: `Details API failed (${res.status})`, detailsUrl };
+        }
+
+        const payload = await res.json();
+        const resolvedDocumentId = extractDocumentIdFromDetails(payload, documentId);
+        const directDownloadUrl = `${origin}/api/docs/download/${resolvedDocumentId}`;
+
+        let finalFileUrl = directDownloadUrl;
+        try {
+            const downloadRes = await fetch(directDownloadUrl, {
+                method: 'GET',
+                credentials: 'include',
+                headers: { 'Accept': 'application/json' }
+            });
+
+            if (downloadRes.ok) {
+                const contentType = (downloadRes.headers.get('content-type') || '').toLowerCase();
+                if (contentType.includes('application/json')) {
+                    const downloadPayload = await downloadRes.json();
+                    const extractedUrl = normalizeUrl(downloadPayload?.url || '');
+                    if (extractedUrl && /^https?:/i.test(extractedUrl)) {
+                        finalFileUrl = extractedUrl;
+                    } else {
+                        return {
+                            ok: false,
+                            error: 'Download API returned JSON but no valid file URL',
+                            detailsUrl,
+                            resolvedDocumentId
+                        };
+                    }
+                }
+            }
+        } catch (error) {
+            // Fallback to direct URL if the intermediate fetch fails.
+        }
+
+        // Preferred Filevine pattern:
+        // 1) /api/docs/{id}/details
+        // 2) /api/docs/download/{id}
+        chrome.runtime.sendMessage({
+            type: 'DOWNLOAD_FILE',
+            url: finalFileUrl
+        });
+
+        return {
+            ok: true,
+            downloadUrl: finalFileUrl,
+            detailsUrl,
+            resolvedDocumentId
+        };
+    } catch (error) {
+        return { ok: false, error: error.message || 'Unknown error', detailsUrl };
+    }
+}
 
 console.log('Click Capture ready - tracking all clicks');

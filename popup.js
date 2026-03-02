@@ -54,6 +54,46 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function setupEventListeners() {
+
+    const downloadAllBtn = document.getElementById('downloadAllBtn');
+
+    if (downloadAllBtn) {
+        downloadAllBtn.addEventListener('click', function() {
+            chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+                if (!tabs || !tabs[0]) return;
+                chrome.tabs.sendMessage(tabs[0].id, {
+                    type: 'DOWNLOAD_ALL_FILES'
+                });
+            });
+        });
+    }
+
+    clicksList.addEventListener('click', function(event) {
+        const docBtn = event.target.closest('.download-doc-btn');
+        if (docBtn) {
+            const documentId = docBtn.dataset.docId || '';
+            const pageUrl = decodeURIComponent(docBtn.dataset.pageUrl || '');
+            downloadByDocumentId(documentId, pageUrl);
+            return;
+        }
+
+        const openBtn = event.target.closest('.open-link-btn');
+        if (openBtn) {
+            const url = decodeURIComponent(openBtn.dataset.url || '');
+            if (url) {
+                window.open(url, '_blank', 'noopener,noreferrer');
+            }
+            return;
+        }
+
+        const copyBtn = event.target.closest('.copy-json-btn');
+        if (copyBtn) {
+            const json = decodeURIComponent(copyBtn.dataset.json || '');
+            if (json) {
+                navigator.clipboard.writeText(json);
+            }
+        }
+    });
     // Toggle button
     toggleBtn.addEventListener('click', function() {
         isCapturing = !isCapturing;
@@ -137,6 +177,8 @@ function addClick(clickData) {
         classes: clickData.classes || '',
         id: clickData.id || '',
         href: clickData.href || '',
+        downloadUrl: clickData.downloadUrl || clickData.href || '',
+        documentId: clickData.documentId || '',
         src: clickData.src || '',
         alt: clickData.alt || '',
         title: clickData.title || '',
@@ -299,6 +341,24 @@ function createClickElement(click) {
             </div>
         `;
     }
+
+    if (click.documentId) {
+        detailsHTML += `
+            <div class="detail-row">
+                <div class="detail-label">Document ID:</div>
+                <div class="detail-value">${click.documentId}</div>
+            </div>
+        `;
+    }
+
+    if (click.downloadUrl) {
+        detailsHTML += `
+            <div class="detail-row">
+                <div class="detail-label">Download URL:</div>
+                <div class="detail-value">${click.downloadUrl}</div>
+            </div>
+        `;
+    }
     
     // Add position info if available
     if (click.position) {
@@ -361,6 +421,11 @@ function createClickElement(click) {
         `;
     }
     
+    const openUrl = click.downloadUrl || click.href || '';
+    const encodedUrl = encodeURIComponent(openUrl);
+    const encodedJson = encodeURIComponent(JSON.stringify(click));
+    const encodedPageUrl = encodeURIComponent(click.pageUrl || '');
+
     return `
         <div class="click-item ${click.type}">
             <div class="click-header">
@@ -385,7 +450,17 @@ function createClickElement(click) {
             </div>
             
             <div class="click-actions">
-                <button class="action-btn" onclick="navigator.clipboard.writeText('${JSON.stringify(click).replace(/'/g, "\\'")}')">
+                ${click.documentId ? `
+                <button class="action-btn download-doc-btn" data-doc-id="${click.documentId}" data-page-url="${encodedPageUrl}">
+                    <i class="fas fa-download"></i> Download by ID
+                </button>
+                ` : ''}
+                ${openUrl ? `
+                <button class="action-btn open-link-btn" data-url="${encodedUrl}">
+                    <i class="fas fa-file-arrow-down"></i> Open File
+                </button>
+                ` : ''}
+                <button class="action-btn copy-json-btn" data-json="${encodedJson}">
                     <i class="fas fa-copy"></i> Copy JSON
                 </button>
             </div>
@@ -396,4 +471,40 @@ function createClickElement(click) {
 function updateTime() {
     const now = new Date();
     currentTime.textContent = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+}
+
+function downloadByDocumentId(documentId, pageUrl) {
+    if (!documentId) {
+        alert('No document ID found for this item.');
+        return;
+    }
+
+    chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+        if (!tabs || !tabs[0]) {
+            alert('No active tab found.');
+            return;
+        }
+
+        chrome.tabs.sendMessage(
+            tabs[0].id,
+            {
+                type: 'DOWNLOAD_DOCUMENT_BY_ID',
+                documentId: documentId,
+                pageUrl: pageUrl
+            },
+            function(response) {
+                if (chrome.runtime.lastError) {
+                    alert(`Download failed: ${chrome.runtime.lastError.message}`);
+                    return;
+                }
+
+                if (!response || !response.ok) {
+                    alert(`Download failed: ${response?.error || 'Unknown error'}`);
+                    return;
+                }
+
+                console.log('Download started from URL:', response.downloadUrl);
+            }
+        );
+    });
 }

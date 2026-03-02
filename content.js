@@ -394,6 +394,62 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
             return true;
         }
 
+        // Documents menu flow:
+        // 1) /api/projects/{projectId}/limitedProjectFolderTree
+        // 2) /api/docs/project/{projectId}
+        // 3) per doc => ExistsForFilevineDocumentIds -> details -> download
+        const projectId = getProjectIdFromUrl(window.location.href);
+        if (projectId) {
+            (async () => {
+                const fromDocsMenuApi = await getDocumentsMenuProjectDocIds(projectId, window.location.href);
+                if (fromDocsMenuApi.ids.length > 0) {
+                    const result = await downloadDocumentIdsSequentially(fromDocsMenuApi.ids, window.location.href);
+                    sendResponse({
+                        mode: 'documents_menu_project_api',
+                        projectId,
+                        requestedFromProjectApi: fromDocsMenuApi.ids.length,
+                        descendantFolderCount: fromDocsMenuApi.descendantFolderIDs.length,
+                        maxChildrenPerFolder: fromDocsMenuApi.maxChildrenPerFolder,
+                        ...result
+                    });
+                    return;
+                }
+
+                // No docs from project API: fallback to visible rows.
+                const pageDocIds = getAllDocumentIdsOnPage();
+                if (pageDocIds.length > 0) {
+                    const perDocResults = [];
+                    for (const id of pageDocIds) {
+                        const singleResult = await downloadDocumentById(id, window.location.href);
+                        perDocResults.push({
+                            id,
+                            ok: !!singleResult?.ok,
+                            error: singleResult?.error || ''
+                        });
+                    }
+
+                    const successCount = perDocResults.filter((r) => r.ok).length;
+                    sendResponse({
+                        ok: successCount > 0,
+                        mode: 'all_visible_docs_on_page',
+                        requested: pageDocIds.length,
+                        succeeded: successCount,
+                        failed: pageDocIds.length - successCount,
+                        details: perDocResults
+                    });
+                    return;
+                }
+
+                const urls = downloadAllFilesOnPage();
+                sendResponse({
+                    mode: 'page_scan',
+                    ok: urls.length > 0,
+                    count: urls.length
+                });
+            })();
+            return true;
+        }
+
         // No manual selection: download every visible document row on the current page.
         const pageDocIds = getAllDocumentIdsOnPage();
         if (pageDocIds.length > 0) {
@@ -588,6 +644,117 @@ function getAllDocumentIdsOnPage() {
         if (match) ids.add(match[1]);
     });
     return Array.from(ids);
+}
+
+function getOriginFromPageUrl(pageUrl) {
+    if (pageUrl) {
+        try {
+            return new URL(pageUrl).origin;
+        } catch (error) {
+            // fall through
+        }
+    }
+    return window.location.origin;
+}
+
+function extractDescendantFolderIds(treePayload) {
+    const ids = new Set();
+    const candidates = [
+        treePayload?.descendantFolderIDs,
+        treePayload?.descendantFolderIds,
+        treePayload?.data?.descendantFolderIDs,
+        treePayload?.data?.descendantFolderIds
+    ];
+
+    candidates.forEach((list) => {
+        if (!Array.isArray(list)) return;
+        list.forEach((item) => {
+            const id = String(item || '').trim();
+            if (/^\d+$/.test(id)) ids.add(id);
+        });
+    });
+
+    return Array.from(ids);
+}
+
+async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
+    if (!projectId) return { ids: [], descendantFolderIDs: [], maxChildrenPerFolder: 500 };
+
+    const origin = getOriginFromPageUrl(pageUrl);
+    const folderTreeUrl = `${origin}/api/projects/${projectId}/limitedProjectFolderTree`;
+    const docsByProjectUrl = `${origin}/api/docs/project/${projectId}`;
+
+    let descendantFolderIDs = [];
+    let maxChildrenPerFolder = 500;
+
+    try {
+        const treeRes = await fetch(folderTreeUrl, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                Accept: 'application/json, text/plain, */*',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+        });
+
+        if (treeRes.ok) {
+            const treePayload = await treeRes.json();
+            descendantFolderIDs = extractDescendantFolderIds(treePayload);
+            const maxChildren =
+                treePayload?.maxChildrenPerFolder ??
+                treePayload?.data?.maxChildrenPerFolder;
+            if (Number.isFinite(Number(maxChildren)) && Number(maxChildren) > 0) {
+                maxChildrenPerFolder = Number(maxChildren);
+            }
+        }
+    } catch (error) {
+        // Keep fallback defaults.
+    }
+
+    const payloadCandidates = [
+        { descendantFolderIDs, maxChildrenPerFolder },
+        { descendantFolderIds: descendantFolderIDs, maxChildrenPerFolder },
+        { folderIDs: descendantFolderIDs, maxChildrenPerFolder },
+        { folderIds: descendantFolderIDs, maxChildrenPerFolder },
+        { descendantFolderIDs },
+        { descendantFolderIds: descendantFolderIDs },
+        {}
+    ];
+
+    for (const payload of payloadCandidates) {
+        try {
+            const res = await fetch(docsByProjectUrl, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    Accept: 'application/json, text/plain, */*',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) continue;
+
+            const docsPayload = await res.json();
+            const rows = Array.isArray(docsPayload?.data) ? docsPayload.data : [];
+            const ids = rows
+                .map((row) => String(row?.id || '').trim())
+                .filter((id) => /^\d+$/.test(id));
+
+            if (ids.length > 0) {
+                return {
+                    ids: Array.from(new Set(ids)),
+                    descendantFolderIDs,
+                    maxChildrenPerFolder
+                };
+            }
+        } catch (error) {
+            // Try next payload shape.
+        }
+    }
+
+    return { ids: [], descendantFolderIDs, maxChildrenPerFolder };
 }
 
 function extractMedicalRecordDocIdsFromCustomPayload(payload) {
@@ -859,16 +1026,25 @@ async function downloadDocumentById(documentId, pageUrl) {
         return { ok: false, error: 'Missing document ID' };
     }
 
-    const origin = (() => {
-        if (pageUrl) {
-            try {
-                return new URL(pageUrl).origin;
-            } catch (error) {
-                // Fall back below.
-            }
+    const origin = getOriginFromPageUrl(pageUrl);
+
+    const existsUrl = `https://app.vinesign.com/integration/ExistsForFilevineDocumentIds?documentIds=${encodeURIComponent(documentId)}`;
+    let existsResponse = null;
+    try {
+        const existsRes = await fetch(existsUrl, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { Accept: 'application/json, text/plain, */*' }
+        });
+        if (existsRes.ok) {
+            const contentType = (existsRes.headers.get('content-type') || '').toLowerCase();
+            existsResponse = contentType.includes('application/json')
+                ? await existsRes.json()
+                : await existsRes.text();
         }
-        return window.location.origin;
-    })();
+    } catch (error) {
+        // Non-blocking: continue to details/download.
+    }
 
     // First fetch details to get the resolved document ID.
     const detailsUrl = `${origin}/api/docs/${documentId}/details`;
@@ -940,10 +1116,18 @@ async function downloadDocumentById(documentId, pageUrl) {
             ok: true,
             downloadUrl: finalFileUrl,
             detailsUrl,
-            resolvedDocumentId
+            resolvedDocumentId,
+            existsUrl,
+            existsResponse
         };
     } catch (error) {
-        return { ok: false, error: error.message || 'Unknown error', detailsUrl };
+        return {
+            ok: false,
+            error: error.message || 'Unknown error',
+            detailsUrl,
+            existsUrl,
+            existsResponse
+        };
     }
 }
 

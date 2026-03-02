@@ -338,7 +338,20 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                 return;
             }
 
-            const result = await downloadDocumentIdsSequentially(fromDocsMenuApi.ids, window.location.href);
+            // Build a mapping of document metadata for better download naming, since the details endpoint often lacks context.
+            const documentsMetaById = {};
+            (fromDocsMenuApi.documents || []).forEach((doc) => {
+                documentsMetaById[doc.id] = doc;
+            });
+
+            const result = await downloadDocumentIdsSequentially(
+                fromDocsMenuApi.ids,
+                window.location.href,
+                {
+                    projectId,
+                    documentsMetaById
+                }
+            );
             sendResponse({
                 mode: 'documents_menu_project_api',
                 projectId,
@@ -442,6 +455,98 @@ function getOriginFromPageUrl(pageUrl) {
     return window.location.origin;
 }
 
+function sanitizePathSegment(value) {
+    const cleaned = String(value || '')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return cleaned || 'Uncategorized';
+}
+
+function buildDownloadPath(projectId, spanName, fileName) {
+    const projectFolder = `project-${String(projectId || 'unknown').trim()}`;
+    const safeProject = sanitizePathSegment(projectFolder);
+    const safeSpan = sanitizePathSegment(spanName || 'Uncategorized');
+    const safeFile = sanitizePathSegment(fileName || 'document');
+    return `Filevine/${safeProject}/${safeSpan}/${safeFile}`;
+}
+
+function pickFileNameFromDocumentRow(row, fallbackId) {
+    const candidates = [
+        row?.filename,
+        row?.fileName,
+        row?.name,
+        row?.title
+    ];
+    const first = candidates.find((value) => typeof value === 'string' && value.trim());
+    return first ? first.trim() : `document-${fallbackId}`;
+}
+
+function extractFolderNameById(treePayload) {
+    const mapping = {};
+    const seen = new Set();
+    const roots = [];
+
+    if (treePayload && typeof treePayload === 'object') {
+        roots.push(treePayload);
+        if (treePayload.data) roots.push(treePayload.data);
+    }
+
+    function walk(node) {
+        if (!node || typeof node !== 'object') return;
+        if (seen.has(node)) return;
+        seen.add(node);
+
+        const idValue = node.id ?? node.folderID ?? node.folderId;
+        const id = String(idValue || '').trim();
+        const nameCandidates = [
+            node.name,
+            node.folderName,
+            node.title,
+            node.label
+        ];
+        const name = nameCandidates.find((value) => typeof value === 'string' && value.trim());
+        if (/^\d+$/.test(id) && name) {
+            mapping[id] = name.trim();
+        }
+
+        Object.values(node).forEach((value) => {
+            if (Array.isArray(value)) value.forEach(walk);
+            else if (value && typeof value === 'object') walk(value);
+        });
+    }
+
+    roots.forEach(walk);
+    return mapping;
+}
+
+function pickSpanNameFromDocumentRow(row, folderNameById) {
+    const directCandidates = [
+        row?.spanName,
+        row?.sectionName,
+        row?.folderName,
+        row?.parentFolderName,
+        row?.groupName,
+        row?.categoryName
+    ];
+    const direct = directCandidates.find((value) => typeof value === 'string' && value.trim());
+    if (direct) return direct.trim();
+
+    const folderIdCandidates = [
+        row?.folderID,
+        row?.folderId,
+        row?.parentFolderID,
+        row?.parentFolderId
+    ];
+
+    for (const candidate of folderIdCandidates) {
+        const key = String(candidate || '').trim();
+        if (key && folderNameById[key]) return folderNameById[key];
+    }
+
+    return 'Uncategorized';
+}
+
 function extractDescendantFolderIds(treePayload) {
     const ids = new Set();
     const candidates = [
@@ -463,7 +568,9 @@ function extractDescendantFolderIds(treePayload) {
 }
 
 async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
-    if (!projectId) return { ids: [], descendantFolderIDs: [], maxChildrenPerFolder: 500 };
+    if (!projectId) {
+        return { ids: [], documents: [], descendantFolderIDs: [], maxChildrenPerFolder: 500 };
+    }
 
     const origin = getOriginFromPageUrl(pageUrl);
     const folderTreeUrl = `${origin}/api/projects/${projectId}/limitedProjectFolderTree`;
@@ -471,6 +578,7 @@ async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
 
     let descendantFolderIDs = [];
     let maxChildrenPerFolder = 500;
+    let folderNameById = {};
 
     try {
         const treeRes = await fetch(folderTreeUrl, {
@@ -486,6 +594,7 @@ async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
         if (treeRes.ok) {
             const treePayload = await treeRes.json();
             descendantFolderIDs = extractDescendantFolderIds(treePayload);
+            folderNameById = extractFolderNameById(treePayload);
             const maxChildren =
                 treePayload?.maxChildrenPerFolder ??
                 treePayload?.data?.maxChildrenPerFolder;
@@ -523,13 +632,24 @@ async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
 
             const docsPayload = await res.json();
             const rows = Array.isArray(docsPayload?.data) ? docsPayload.data : [];
-            const ids = rows
-                .map((row) => String(row?.id || '').trim())
-                .filter((id) => /^\d+$/.test(id));
+            const documents = [];
+            const seenIds = new Set();
 
-            if (ids.length > 0) {
+            rows.forEach((row) => {
+                const id = String(row?.id || '').trim();
+                if (!/^\d+$/.test(id) || seenIds.has(id)) return;
+                seenIds.add(id);
+                documents.push({
+                    id,
+                    fileName: pickFileNameFromDocumentRow(row, id),
+                    spanName: pickSpanNameFromDocumentRow(row, folderNameById)
+                });
+            });
+
+            if (documents.length > 0) {
                 return {
-                    ids: Array.from(new Set(ids)),
+                    ids: documents.map((doc) => doc.id),
+                    documents,
                     descendantFolderIDs,
                     maxChildrenPerFolder
                 };
@@ -539,10 +659,10 @@ async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
         }
     }
 
-    return { ids: [], descendantFolderIDs, maxChildrenPerFolder };
+    return { ids: [], documents: [], descendantFolderIDs, maxChildrenPerFolder };
 }
 
-async function downloadDocumentIdsSequentially(documentIds, pageUrl) {
+async function downloadDocumentIdsSequentially(documentIds, pageUrl, options = {}) {
     const uniqueIds = Array.from(
         new Set(
             (documentIds || [])
@@ -553,7 +673,12 @@ async function downloadDocumentIdsSequentially(documentIds, pageUrl) {
 
     const perDocResults = [];
     for (const id of uniqueIds) {
-        const singleResult = await downloadDocumentById(id, pageUrl);
+        const singleResult = await downloadDocumentById(
+            id,
+            pageUrl,
+            options.documentsMetaById?.[id] || null,
+            options.projectId || ''
+        );
         perDocResults.push({
             id,
             ok: !!singleResult?.ok,
@@ -587,17 +712,24 @@ function parseFileNameFromContentDisposition(headerValue) {
     return fileNameMatch?.[1]?.trim() || '';
 }
 
-function triggerBlobDownload(blob, fileName) {
-    const safeName = (fileName || 'document').replace(/[\\/:*?"<>|]+/g, '_');
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = objectUrl;
-    anchor.download = safeName;
-    anchor.style.display = 'none';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Failed to read blob'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+function pickFileNameFromDetails(payload, fallbackId) {
+    const candidates = [
+        payload?.filename,
+        payload?.fileName,
+        payload?.name,
+        payload?.title
+    ];
+    const first = candidates.find((value) => typeof value === 'string' && value.trim());
+    return first ? first.trim() : `document-${fallbackId}`;
 }
 
 function extractDocumentIdFromDetails(payload, fallbackId) {
@@ -635,7 +767,7 @@ function extractDocumentIdFromDetails(payload, fallbackId) {
     return walk(payload) || String(fallbackId || '');
 }
 
-async function downloadDocumentById(documentId, pageUrl) {
+async function downloadDocumentById(documentId, pageUrl, documentMeta = null, projectId = '') {
     if (!documentId) {
         return { ok: false, error: 'Missing document ID' };
     }
@@ -676,6 +808,16 @@ async function downloadDocumentById(documentId, pageUrl) {
         const payload = await res.json();
         const resolvedDocumentId = extractDocumentIdFromDetails(payload, documentId);
         const directDownloadUrl = `${origin}/api/docs/download/${resolvedDocumentId}`;
+        const resolvedProjectId = projectId || getProjectIdFromUrl(pageUrl);
+        const resolvedSpanName = documentMeta?.spanName || 'Uncategorized';
+        const resolvedFileName =
+            documentMeta?.fileName ||
+            pickFileNameFromDetails(payload, resolvedDocumentId);
+        const targetPath = buildDownloadPath(
+            resolvedProjectId,
+            resolvedSpanName,
+            resolvedFileName
+        );
 
         const downloadRes = await fetch(directDownloadUrl, {
             method: 'POST',
@@ -716,14 +858,21 @@ async function downloadDocumentById(documentId, pageUrl) {
             finalFileUrl = bestUrl;
             chrome.runtime.sendMessage({
                 type: 'DOWNLOAD_FILE',
-                url: finalFileUrl
+                url: finalFileUrl,
+                filename: targetPath
             });
         } else {
             const blob = await downloadRes.blob();
-            const fileName =
+            const fileNameFromHeader =
                 parseFileNameFromContentDisposition(downloadRes.headers.get('content-disposition') || '') ||
-                `document-${resolvedDocumentId}`;
-            triggerBlobDownload(blob, fileName);
+                resolvedFileName;
+            const blobPath = buildDownloadPath(resolvedProjectId, resolvedSpanName, fileNameFromHeader);
+            const dataUrl = await blobToDataUrl(blob);
+            chrome.runtime.sendMessage({
+                type: 'DOWNLOAD_FILE',
+                url: dataUrl,
+                filename: blobPath
+            });
         }
 
         return {

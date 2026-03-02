@@ -145,6 +145,12 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         case 'CLICKS_UPDATED':
             chrome.storage.local.set({capturedClicks: message.clicks});
             break;
+
+        case 'DOWNLOAD_STATUS':
+            chrome.runtime.sendMessage(message).catch(() => {
+                // Side panel might not be open.
+            });
+            break;
     }
 
     return true;

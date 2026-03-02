@@ -14,6 +14,7 @@ const clearBtn = document.getElementById('clearBtn');
 const exportBtn = document.getElementById('exportBtn');
 const currentTime = document.getElementById('currentTime');
 const filterButtons = document.querySelectorAll('.filter-btn');
+const downloadStatus = document.getElementById('downloadStatus');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
@@ -39,6 +40,10 @@ document.addEventListener('DOMContentLoaded', function() {
             capturedClicks = message.clicks;
             updateDisplay();
         }
+
+        if (message.type === 'DOWNLOAD_STATUS') {
+            handleDownloadStatusMessage(message);
+        }
         
         return true;
     });
@@ -59,13 +64,25 @@ function setupEventListeners() {
 
     if (downloadAllBtn) {
         downloadAllBtn.addEventListener('click', function() {
+            setDownloadStatus('Download in progress: preparing files...', 'info');
             chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
                 if (!tabs || !tabs[0]) return;
                 chrome.tabs.sendMessage(tabs[0].id, {
                     type: 'DOWNLOAD_ALL_FILES'
+                }, function(response) {
+                    if (chrome.runtime.lastError) {
+                        setDownloadStatus(`Download failed: ${chrome.runtime.lastError.message}. Please refresh the page.`, 'error');
+                        return;
+                    }       
+
+                    if (!response) return;
+                    if (response.ok === false) {
+                        setDownloadStatus(`Download failed: ${response.error || 'Unknown error'}`, 'error');
+                        return;
+                    }
+                });
                 });
             });
-        });
     }
 
     clicksList.addEventListener('click', function(event) {
@@ -473,6 +490,55 @@ function updateTime() {
     currentTime.textContent = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 }
 
+function buildDownloadFailedAlert(errorMessage) {
+    const detail = errorMessage || 'Unknown error';
+    return `Download failed.\nPlease make sure you are on the Filevine page and still logged in.\n\nError details: ${detail}`;
+}
+
+function setDownloadStatus(message, tone = 'info') {
+    if (!downloadStatus) return;
+    downloadStatus.classList.remove('hidden', 'success', 'error');
+    if (tone === 'success') downloadStatus.classList.add('success');
+    if (tone === 'error') downloadStatus.classList.add('error');
+    downloadStatus.textContent = message;
+}
+
+function handleDownloadStatusMessage(message) {
+    const total = Number(message.total || 0);
+    const completed = Number(message.completed || 0);
+    const succeeded = Number(message.succeeded || 0);
+    const failed = Number(message.failed || 0);
+
+    if (message.stage === 'started') {
+        setDownloadStatus(`Download in progress: 0/${total} files downloaded`, 'info');
+        return;
+    }
+
+    if (message.stage === 'in_progress') {
+        setDownloadStatus(
+            `Download in progress: ${completed}/${total} files downloaded (Success: ${succeeded}, Failed: ${failed})`,
+            failed > 0 ? 'error' : 'info'
+        );
+        return;
+    }
+
+    if (message.stage === 'completed') {
+        if (failed === 0 && total > 0) {
+            setDownloadStatus(
+                `All files downloaded successfully. Saved inside individual folders.`,
+                'success'
+            );
+        } else if (total === 0) {
+            setDownloadStatus('No files found to download.', 'error');
+        } else {
+            setDownloadStatus(
+                `Download completed with errors. Downloaded ${succeeded}/${total} files.`,
+                'error'
+            );
+        }
+    }
+}
+
 function downloadByDocumentId(documentId, pageUrl) {
     if (!documentId) {
         alert('No document ID found for this item.');
@@ -494,12 +560,12 @@ function downloadByDocumentId(documentId, pageUrl) {
             },
             function(response) {
                 if (chrome.runtime.lastError) {
-                    alert(`Download failed: ${chrome.runtime.lastError.message}`);
+                    alert(buildDownloadFailedAlert(chrome.runtime.lastError.message));
                     return;
                 }
 
                 if (!response || !response.ok) {
-                    alert(`Download failed: ${response?.error || 'Unknown error'}`);
+                    alert(buildDownloadFailedAlert(response?.error || 'Unknown error'));
                     return;
                 }
 

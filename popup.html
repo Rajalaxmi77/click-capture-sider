@@ -169,6 +169,33 @@
             padding: 16px;
         }
 
+        .download-status {
+            margin: 10px 16px 0;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            border: 1px solid #dbeafe;
+            background: #eff6ff;
+            color: #1d4ed8;
+        }
+
+        .download-status.success {
+            border-color: #bbf7d0;
+            background: #f0fdf4;
+            color: #166534;
+        }
+
+        .download-status.error {
+            border-color: #fecaca;
+            background: #fef2f2;
+            color: #991b1b;
+        }
+
+        .download-status.hidden {
+            display: none;
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -389,6 +416,7 @@
             <button class="filter-btn" data-filter="div">Divs</button>
             <button class="filter-btn" data-filter="span">Spans</button>
         </div>
+        <div class="download-status hidden" id="downloadStatus"></div>
 
         <!-- Clicks List -->
         <div class="clicks-container" id="clicksList">
@@ -409,7 +437,7 @@
             </div>
             <div class="footer-actions">
                 <button class="footer-btn" id="downloadAllBtn" title="Download Files">
-                    <i class="fas fa-file-arrow-down"></i> Download Files
+                    <i class="fas fa-file-arrow-down"></i> Sync Now
                 </button>
                 <button class="footer-btn" id="exportBtn">
                     <i class="fas fa-file-csv"></i> Export

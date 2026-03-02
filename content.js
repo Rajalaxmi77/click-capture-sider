@@ -349,7 +349,15 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                 window.location.href,
                 {
                     projectId,
-                    documentsMetaById
+                    documentsMetaById,
+                    onProgress: (progress) => {
+                        emitDownloadStatus({
+                            mode: 'documents_menu_project_api',
+                            projectId,
+                            docsMenuUrl,
+                            ...progress
+                        });
+                    }
                 }
             );
             sendResponse({
@@ -469,6 +477,17 @@ function buildDownloadPath(projectId, spanName, fileName) {
     const safeSpan = sanitizePathSegment(spanName || 'Uncategorized');
     const safeFile = sanitizePathSegment(fileName || 'document');
     return `Filevine/${safeProject}/${safeSpan}/${safeFile}`;
+}
+
+function emitDownloadStatus(status) {
+    try {
+        chrome.runtime.sendMessage({
+            type: 'DOWNLOAD_STATUS',
+            ...status
+        });
+    } catch (error) {
+        // Side panel may be closed.
+    }
 }
 
 function pickFileNameFromDocumentRow(row, fallbackId) {
@@ -672,21 +691,61 @@ async function downloadDocumentIdsSequentially(documentIds, pageUrl, options = {
     );
 
     const perDocResults = [];
+    let succeeded = 0;
+    let failed = 0;
+    const total = uniqueIds.length;
+
+    if (typeof options.onProgress === 'function') {
+        options.onProgress({
+            stage: 'started',
+            total,
+            completed: 0,
+            succeeded: 0,
+            failed: 0
+        });
+    }
+
     for (const id of uniqueIds) {
+        const currentMeta = options.documentsMetaById?.[id] || null;
         const singleResult = await downloadDocumentById(
             id,
             pageUrl,
-            options.documentsMetaById?.[id] || null,
+            currentMeta,
             options.projectId || ''
         );
+        if (singleResult?.ok) succeeded += 1;
+        else failed += 1;
+
         perDocResults.push({
             id,
             ok: !!singleResult?.ok,
             error: singleResult?.error || ''
         });
+
+        if (typeof options.onProgress === 'function') {
+            options.onProgress({
+                stage: 'in_progress',
+                total,
+                completed: succeeded + failed,
+                succeeded,
+                failed,
+                currentId: id,
+                currentFile: currentMeta?.fileName || ''
+            });
+        }
     }
 
     const successCount = perDocResults.filter((r) => r.ok).length;
+    if (typeof options.onProgress === 'function') {
+        options.onProgress({
+            stage: 'completed',
+            total,
+            completed: total,
+            succeeded: successCount,
+            failed: total - successCount
+        });
+    }
+
     return {
         ok: successCount > 0,
         requested: uniqueIds.length,

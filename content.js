@@ -326,7 +326,8 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         }
 
         (async () => {
-            const fromDocsMenuApi = await getDocumentsMenuProjectDocIds(projectId, window.location.href);
+            const docsMenuUrl = buildProjectDocsMenuUrl(projectId, window.location.href);
+            const fromDocsMenuApi = await getDocumentsMenuProjectDocIds(projectId, docsMenuUrl || window.location.href);
             if (fromDocsMenuApi.ids.length === 0) {
                 sendResponse({
                     ok: false,
@@ -341,6 +342,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
             sendResponse({
                 mode: 'documents_menu_project_api',
                 projectId,
+                docsMenuUrl,
                 requestedFromProjectApi: fromDocsMenuApi.ids.length,
                 descendantFolderCount: fromDocsMenuApi.descendantFolderIDs.length,
                 maxChildrenPerFolder: fromDocsMenuApi.maxChildrenPerFolder,
@@ -411,8 +413,22 @@ function chooseBestFileUrl(urls, documentId) {
 
 function getProjectIdFromUrl(pageUrl) {
     const source = pageUrl || window.location.href;
-    const match = source.match(/\/project\/(\d+)/i);
-    return match ? match[1] : '';
+    const directMatch = source.match(/\/project\/(\d+)/i);
+    if (directMatch) return directMatch[1];
+
+    try {
+        const url = new URL(source, window.location.href);
+        const hashMatch = (url.hash || '').match(/\/project\/(\d+)/i);
+        return hashMatch ? hashMatch[1] : '';
+    } catch (error) {
+        return '';
+    }
+}
+
+function buildProjectDocsMenuUrl(projectId, pageUrl) {
+    if (!projectId) return '';
+    const origin = getOriginFromPageUrl(pageUrl);
+    return `${origin}/#/project/${projectId}/docs/`;
 }
 
 function getOriginFromPageUrl(pageUrl) {

@@ -361,6 +361,39 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
             return true;
         }
 
+        // For medical records custom page, pull document IDs from the API used by that menu.
+        if (isMedicalRecordsPage(window.location.href)) {
+            (async () => {
+                const projectId = getProjectIdFromUrl(window.location.href);
+                const sectionKey = getCustomSectionKeyFromUrl(window.location.href);
+                const apiDocIds = await getMedicalRecordsDocumentIds(projectId, sectionKey, window.location.href);
+                const domDocIds = getAllDocumentIdsOnPage();
+                const allIds = apiDocIds.length > 0 ? apiDocIds : domDocIds;
+
+                if (!allIds.length) {
+                    sendResponse({
+                        ok: false,
+                        mode: 'medical_records_custom_api',
+                        error: 'No document IDs found in medical records section'
+                    });
+                    return;
+                }
+
+                const result = await downloadDocumentIdsSequentially(allIds, window.location.href);
+                sendResponse({
+                    mode: 'medical_records_custom_api',
+                    projectId,
+                    sectionKey,
+                    sourceCounts: {
+                        api: apiDocIds.length,
+                        dom: domDocIds.length
+                    },
+                    ...result
+                });
+            })();
+            return true;
+        }
+
         // No manual selection: download every visible document row on the current page.
         const pageDocIds = getAllDocumentIdsOnPage();
         if (pageDocIds.length > 0) {
@@ -505,6 +538,17 @@ function getProjectIdFromUrl(pageUrl) {
     return match ? match[1] : '';
 }
 
+function getCustomSectionKeyFromUrl(pageUrl) {
+    const source = pageUrl || window.location.href;
+    const match = source.match(/\/custom\/([^/?#]+)/i);
+    return match ? match[1] : '';
+}
+
+function isMedicalRecordsPage(pageUrl) {
+    const key = getCustomSectionKeyFromUrl(pageUrl);
+    return /^medicalrecords\d+$/i.test(key);
+}
+
 function getSelectedDocumentIdsFromDom() {
     const ids = new Set();
 
@@ -544,6 +588,149 @@ function getAllDocumentIdsOnPage() {
         if (match) ids.add(match[1]);
     });
     return Array.from(ids);
+}
+
+function extractMedicalRecordDocIdsFromCustomPayload(payload) {
+    const ids = new Set();
+    const seen = new Set();
+
+    function addId(value) {
+        const str = String(value || '').trim();
+        if (/^\d+$/.test(str)) ids.add(str);
+    }
+
+    function walk(value, depth = 0) {
+        if (value === null || value === undefined || depth > 10) return;
+
+        if (Array.isArray(value)) {
+            value.forEach((item) => walk(item, depth + 1));
+            return;
+        }
+
+        if (typeof value !== 'object') return;
+        if (seen.has(value)) return;
+        seen.add(value);
+
+        for (const [key, item] of Object.entries(value)) {
+            const isRecordsArray = /^records\d+$/i.test(key) && Array.isArray(item);
+            if (isRecordsArray) {
+                item.forEach((record) => {
+                    if (!record || typeof record !== 'object') return;
+                    if (record.id !== undefined) addId(record.id);
+                });
+            }
+        }
+
+        Object.values(value).forEach((item) => walk(item, depth + 1));
+    }
+
+    walk(payload, 0);
+    return Array.from(ids);
+}
+
+async function getMedicalRecordsDocumentIds(projectId, sectionKey, pageUrl) {
+    if (!projectId || !sectionKey) return [];
+    if (!/^medicalrecords\d+$/i.test(sectionKey)) return [];
+
+    const key = sectionKey;
+    const origin = (() => {
+        if (pageUrl) {
+            try {
+                return new URL(pageUrl).origin;
+            } catch (error) {
+                // fall through
+            }
+        }
+        return window.location.origin;
+    })();
+
+    const reportMetaUrl = `${origin}/api/customSectionReportsByKey/${key}`;
+    const customDataUrl = `${origin}/api/projects/${projectId}/custom/${key}?page=1`;
+
+    const ids = new Set();
+
+    try {
+        const metaRes = await fetch(reportMetaUrl, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { Accept: 'application/json, text/plain, */*' }
+        });
+        if (metaRes.ok) {
+            await metaRes.json();
+        }
+    } catch (error) {
+        // non-blocking
+    }
+
+    try {
+        const dataRes = await fetch(customDataUrl, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                Accept: 'application/json, text/plain, */*',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+        });
+        if (dataRes.ok) {
+            const payload = await dataRes.json();
+            extractMedicalRecordDocIdsFromCustomPayload(payload).forEach((id) => ids.add(id));
+        }
+    } catch (error) {
+        // non-blocking
+    }
+
+    return Array.from(ids);
+}
+
+async function downloadDocumentIdsSequentially(documentIds, pageUrl) {
+    const perDocResults = [];
+    for (const id of documentIds) {
+        const singleResult = await downloadDocumentById(id, pageUrl);
+        perDocResults.push({
+            id,
+            ok: !!singleResult?.ok,
+            error: singleResult?.error || ''
+        });
+    }
+
+    const successCount = perDocResults.filter((r) => r.ok).length;
+    return {
+        ok: successCount > 0,
+        requested: documentIds.length,
+        succeeded: successCount,
+        failed: documentIds.length - successCount,
+        details: perDocResults
+    };
+}
+
+function parseFileNameFromContentDisposition(headerValue) {
+    if (!headerValue) return '';
+
+    const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match && utf8Match[1]) {
+        try {
+            return decodeURIComponent(utf8Match[1]).trim().replace(/^["']|["']$/g, '');
+        } catch (error) {
+            // keep going
+        }
+    }
+
+    const fileNameMatch = headerValue.match(/filename="?([^"]+)"?/i);
+    return fileNameMatch?.[1]?.trim() || '';
+}
+
+function triggerBlobDownload(blob, fileName) {
+    const safeName = (fileName || 'document').replace(/[\\/:*?"<>|]+/g, '_');
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = safeName;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
 }
 
 function extractDocumentIdFromDetails(payload, fallbackId) {
@@ -683,7 +870,7 @@ async function downloadDocumentById(documentId, pageUrl) {
         return window.location.origin;
     })();
 
-    // First fetch details to get the resolved document ID and potential download URLs.
+    // First fetch details to get the resolved document ID.
     const detailsUrl = `${origin}/api/docs/${documentId}/details`;
     try {
         const res = await fetch(detailsUrl, {
@@ -700,42 +887,54 @@ async function downloadDocumentById(documentId, pageUrl) {
         const resolvedDocumentId = extractDocumentIdFromDetails(payload, documentId);
         const directDownloadUrl = `${origin}/api/docs/download/${resolvedDocumentId}`;
 
-        let finalFileUrl = directDownloadUrl;
-        try {
-            const downloadRes = await fetch(directDownloadUrl, {
-                method: 'GET',
-                credentials: 'include',
-                headers: { 'Accept': 'application/json' }
-            });
+        const downloadRes = await fetch(directDownloadUrl, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+        });
 
-            if (downloadRes.ok) {
-                const contentType = (downloadRes.headers.get('content-type') || '').toLowerCase();
-                if (contentType.includes('application/json')) {
-                    const downloadPayload = await downloadRes.json();
-                    const extractedUrl = normalizeUrl(downloadPayload?.url || '');
-                    if (extractedUrl && /^https?:/i.test(extractedUrl)) {
-                        finalFileUrl = extractedUrl;
-                    } else {
-                        return {
-                            ok: false,
-                            error: 'Download API returned JSON but no valid file URL',
-                            detailsUrl,
-                            resolvedDocumentId
-                        };
-                    }
-                }
-            }
-        } catch (error) {
-            // Fallback to direct URL if the intermediate fetch fails.
+        if (!downloadRes.ok) {
+            return {
+                ok: false,
+                error: `Download API failed (${downloadRes.status})`,
+                detailsUrl,
+                resolvedDocumentId
+            };
         }
 
-        // Preferred Filevine pattern:
-        // 1) /api/docs/{id}/details
-        // 2) /api/docs/download/{id}
-        chrome.runtime.sendMessage({
-            type: 'DOWNLOAD_FILE',
-            url: finalFileUrl
-        });
+        const contentType = (downloadRes.headers.get('content-type') || '').toLowerCase();
+        let finalFileUrl = directDownloadUrl;
+        if (contentType.includes('application/json')) {
+            const downloadPayload = await downloadRes.json();
+            const extractedUrls = new Set();
+            extractUrlsFromObject(downloadPayload, extractedUrls);
+            const bestUrl = chooseBestFileUrl(extractedUrls, resolvedDocumentId);
+
+            if (!bestUrl) {
+                return {
+                    ok: false,
+                    error: 'Download API returned JSON but no valid file URL',
+                    detailsUrl,
+                    resolvedDocumentId
+                };
+            }
+
+            finalFileUrl = bestUrl;
+            chrome.runtime.sendMessage({
+                type: 'DOWNLOAD_FILE',
+                url: finalFileUrl
+            });
+        } else {
+            const blob = await downloadRes.blob();
+            const fileName =
+                parseFileNameFromContentDisposition(downloadRes.headers.get('content-disposition') || '') ||
+                `document-${resolvedDocumentId}`;
+            triggerBlobDownload(blob, fileName);
+        }
 
         return {
             ok: true,

@@ -2,8 +2,6 @@ console.log('Click Capture content script loaded');
 
 // Initialize click tracking
 let isCapturing = true;
-let lastSelectedDocument = null;
-const selectedDocumentIds = new Set();
 
 function normalizeUrl(url) {
     if (!url) return '';
@@ -184,14 +182,7 @@ document.addEventListener('click', function(event) {
     const targetUrl = resolveTargetUrl(target);
     const documentId = getDocumentId(target);
 
-    if (documentId) {
-        lastSelectedDocument = {
-            documentId: documentId,
-            pageUrl: window.location.href,
-            selectedAt: Date.now()
-        };
-        selectedDocumentIds.add(documentId);
-    }
+    // Keep documentId on click payload for UI visibility.
     
     // Prepare basic click data
     const clickData = {
@@ -266,7 +257,6 @@ function checkUrlChange() {
         console.log('URL changed from', lastUrl, 'to', currentUrl);
         const oldUrl = lastUrl;
         lastUrl = currentUrl;
-        selectedDocumentIds.clear();
         
         try {
             chrome.runtime.sendMessage({
@@ -310,87 +300,13 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
 
     // for downloading files based on user selection in the side panel
     if (message.type === 'DOWNLOAD_ALL_FILES') {
-        const selectedIds = getAllSelectedDocumentIds();
-
-        if (selectedIds.length > 1) {
-            const perDocResults = [];
-            (async () => {
-                for (const id of selectedIds) {
-                    const singleResult = await downloadDocumentById(id, window.location.href);
-                    perDocResults.push({
-                        id,
-                        ok: !!singleResult?.ok,
-                        error: singleResult?.error || ''
-                    });
-                }
-
-                const successCount = perDocResults.filter((r) => r.ok).length;
-                sendResponse({
-                    ok: successCount > 0,
-                    mode: 'loop_single_download',
-                    requested: selectedIds.length,
-                    succeeded: successCount,
-                    failed: selectedIds.length - successCount,
-                    details: perDocResults
-                });
-            })();
-            return true;
-        }
-
-        if (selectedIds.length === 1) {
-            downloadDocumentById(selectedIds[0], window.location.href).then((result) => {
-                sendResponse({
-                    mode: 'selected_document',
-                    ...result
-                });
+        // Prevent duplicate bulk downloads when content script runs in all frames.
+        if (window.top !== window) {
+            sendResponse({
+                ok: false,
+                skipped: true,
+                reason: 'ignored_in_non_top_frame'
             });
-            return true;
-        }
-
-        // If user selected a specific Filevine document row, download only that file.
-        if (lastSelectedDocument && lastSelectedDocument.documentId) {
-            downloadDocumentById(
-                lastSelectedDocument.documentId,
-                lastSelectedDocument.pageUrl || window.location.href
-            ).then((result) => {
-                sendResponse({
-                    mode: 'selected_document',
-                    ...result
-                });
-            });
-            return true;
-        }
-
-        // For medical records custom page, pull document IDs from the API used by that menu.
-        if (isMedicalRecordsPage(window.location.href)) {
-            (async () => {
-                const projectId = getProjectIdFromUrl(window.location.href);
-                const sectionKey = getCustomSectionKeyFromUrl(window.location.href);
-                const apiDocIds = await getMedicalRecordsDocumentIds(projectId, sectionKey, window.location.href);
-                const domDocIds = getAllDocumentIdsOnPage();
-                const allIds = apiDocIds.length > 0 ? apiDocIds : domDocIds;
-
-                if (!allIds.length) {
-                    sendResponse({
-                        ok: false,
-                        mode: 'medical_records_custom_api',
-                        error: 'No document IDs found in medical records section'
-                    });
-                    return;
-                }
-
-                const result = await downloadDocumentIdsSequentially(allIds, window.location.href);
-                sendResponse({
-                    mode: 'medical_records_custom_api',
-                    projectId,
-                    sectionKey,
-                    sourceCounts: {
-                        api: apiDocIds.length,
-                        dom: domDocIds.length
-                    },
-                    ...result
-                });
-            })();
             return true;
         }
 
@@ -398,91 +314,39 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         // 1) /api/projects/{projectId}/limitedProjectFolderTree
         // 2) /api/docs/project/{projectId}
         // 3) per doc => ExistsForFilevineDocumentIds -> details -> download
+
         const projectId = getProjectIdFromUrl(window.location.href);
-        if (projectId) {
-            (async () => {
-                const fromDocsMenuApi = await getDocumentsMenuProjectDocIds(projectId, window.location.href);
-                if (fromDocsMenuApi.ids.length > 0) {
-                    const result = await downloadDocumentIdsSequentially(fromDocsMenuApi.ids, window.location.href);
-                    sendResponse({
-                        mode: 'documents_menu_project_api',
-                        projectId,
-                        requestedFromProjectApi: fromDocsMenuApi.ids.length,
-                        descendantFolderCount: fromDocsMenuApi.descendantFolderIDs.length,
-                        maxChildrenPerFolder: fromDocsMenuApi.maxChildrenPerFolder,
-                        ...result
-                    });
-                    return;
-                }
-
-                // No docs from project API: fallback to visible rows.
-                const pageDocIds = getAllDocumentIdsOnPage();
-                if (pageDocIds.length > 0) {
-                    const perDocResults = [];
-                    for (const id of pageDocIds) {
-                        const singleResult = await downloadDocumentById(id, window.location.href);
-                        perDocResults.push({
-                            id,
-                            ok: !!singleResult?.ok,
-                            error: singleResult?.error || ''
-                        });
-                    }
-
-                    const successCount = perDocResults.filter((r) => r.ok).length;
-                    sendResponse({
-                        ok: successCount > 0,
-                        mode: 'all_visible_docs_on_page',
-                        requested: pageDocIds.length,
-                        succeeded: successCount,
-                        failed: pageDocIds.length - successCount,
-                        details: perDocResults
-                    });
-                    return;
-                }
-
-                const urls = downloadAllFilesOnPage();
-                sendResponse({
-                    mode: 'page_scan',
-                    ok: urls.length > 0,
-                    count: urls.length
-                });
-            })();
+        if (!projectId) {
+            sendResponse({
+                ok: false,
+                mode: 'documents_menu_project_api',
+                error: 'Missing project ID in current URL'
+            });
             return true;
         }
 
-        // No manual selection: download every visible document row on the current page.
-        const pageDocIds = getAllDocumentIdsOnPage();
-        if (pageDocIds.length > 0) {
-            const perDocResults = [];
-            (async () => {
-                for (const id of pageDocIds) {
-                    const singleResult = await downloadDocumentById(id, window.location.href);
-                    perDocResults.push({
-                        id,
-                        ok: !!singleResult?.ok,
-                        error: singleResult?.error || ''
-                    });
-                }
-
-                const successCount = perDocResults.filter((r) => r.ok).length;
+        (async () => {
+            const fromDocsMenuApi = await getDocumentsMenuProjectDocIds(projectId, window.location.href);
+            if (fromDocsMenuApi.ids.length === 0) {
                 sendResponse({
-                    ok: successCount > 0,
-                    mode: 'all_visible_docs_on_page',
-                    requested: pageDocIds.length,
-                    succeeded: successCount,
-                    failed: pageDocIds.length - successCount,
-                    details: perDocResults
+                    ok: false,
+                    mode: 'documents_menu_project_api',
+                    projectId,
+                    error: 'No documents returned from /api/docs/project'
                 });
-            })();
-            return true;
-        }
+                return;
+            }
 
-        const urls = downloadAllFilesOnPage();
-        sendResponse({
-            mode: 'page_scan',
-            ok: urls.length > 0,
-            count: urls.length
-        });
+            const result = await downloadDocumentIdsSequentially(fromDocsMenuApi.ids, window.location.href);
+            sendResponse({
+                mode: 'documents_menu_project_api',
+                projectId,
+                requestedFromProjectApi: fromDocsMenuApi.ids.length,
+                descendantFolderCount: fromDocsMenuApi.descendantFolderIDs.length,
+                maxChildrenPerFolder: fromDocsMenuApi.maxChildrenPerFolder,
+                ...result
+            });
+        })();
         return true;
     }
 
@@ -504,49 +368,6 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
-
-function downloadAllFilesOnPage() {
-    // Run once in the top frame to avoid duplicate scans in all_frames mode.
-    if (window.top !== window) return [];
-
-    const filePattern = /\.(pdf|doc|docx|xlsx|xls|png|jpe?g|csv|txt|zip)(?:$|[?#])/i;
-    const downloadHintPattern = /(\/download\b|[?&](download|attachment|filename|response-content-disposition|docid)=)/i;
-    const candidateUrls = new Set();
-
-    function maybeAddUrl(rawUrl) {
-        const url = normalizeUrl(rawUrl);
-        if (!url) return;
-        if (filePattern.test(url) || downloadHintPattern.test(url)) {
-            candidateUrls.add(url);
-        }
-    }
-
-    document.querySelectorAll('a[href], [data-url], [data-href], [data-file-url], [data-download-url], [src]').forEach(el => {
-        if (el.hasAttribute('href')) maybeAddUrl(el.getAttribute('href'));
-        if (el.hasAttribute('src')) maybeAddUrl(el.getAttribute('src'));
-
-        const datasetUrl = getDatasetUrl(el);
-        if (datasetUrl) maybeAddUrl(datasetUrl);
-    });
-
-    document.querySelectorAll('[onclick]').forEach(el => {
-        const onclick = el.getAttribute('onclick') || '';
-        const urlMatch = onclick.match(/https?:\/\/[^'" )]+/i);
-        if (urlMatch) maybeAddUrl(urlMatch[0]);
-    });
-
-    const fileUrls = Array.from(candidateUrls);
-    console.log('Found files:', fileUrls);
-
-    fileUrls.forEach(url => {
-        chrome.runtime.sendMessage({
-            type: 'DOWNLOAD_FILE',
-            url: url
-        });
-    });
-
-    return fileUrls;
-}
 
 function extractUrlsFromObject(value, out, depth = 0) {
     if (!value || depth > 8) return;
@@ -592,58 +413,6 @@ function getProjectIdFromUrl(pageUrl) {
     const source = pageUrl || window.location.href;
     const match = source.match(/\/project\/(\d+)/i);
     return match ? match[1] : '';
-}
-
-function getCustomSectionKeyFromUrl(pageUrl) {
-    const source = pageUrl || window.location.href;
-    const match = source.match(/\/custom\/([^/?#]+)/i);
-    return match ? match[1] : '';
-}
-
-function isMedicalRecordsPage(pageUrl) {
-    const key = getCustomSectionKeyFromUrl(pageUrl);
-    return /^medicalrecords\d+$/i.test(key);
-}
-
-function getSelectedDocumentIdsFromDom() {
-    const ids = new Set();
-
-    function addIdFromElement(el) {
-        if (!el || !el.id) return;
-        const match = el.id.match(/^list-item-doc-(\d+)$/);
-        if (match) ids.add(match[1]);
-    }
-
-    document.querySelectorAll('li[id^="list-item-doc-"]').forEach((el) => {
-        const isSelected =
-            el.classList.contains('selected') ||
-            el.getAttribute('aria-selected') === 'true' ||
-            el.matches('.active, [data-selected="true"]');
-
-        if (isSelected) addIdFromElement(el);
-    });
-
-    document.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
-        const row = checkbox.closest('li[id^="list-item-doc-"]');
-        addIdFromElement(row);
-    });
-
-    return Array.from(ids);
-}
-
-function getAllSelectedDocumentIds() {
-    const fromDom = getSelectedDocumentIdsFromDom();
-    const merged = new Set([...fromDom, ...selectedDocumentIds]);
-    return Array.from(merged);
-}
-
-function getAllDocumentIdsOnPage() {
-    const ids = new Set();
-    document.querySelectorAll('li[id^="list-item-doc-"]').forEach((el) => {
-        const match = el.id.match(/^list-item-doc-(\d+)$/);
-        if (match) ids.add(match[1]);
-    });
-    return Array.from(ids);
 }
 
 function getOriginFromPageUrl(pageUrl) {
@@ -757,102 +526,17 @@ async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
     return { ids: [], descendantFolderIDs, maxChildrenPerFolder };
 }
 
-function extractMedicalRecordDocIdsFromCustomPayload(payload) {
-    const ids = new Set();
-    const seen = new Set();
-
-    function addId(value) {
-        const str = String(value || '').trim();
-        if (/^\d+$/.test(str)) ids.add(str);
-    }
-
-    function walk(value, depth = 0) {
-        if (value === null || value === undefined || depth > 10) return;
-
-        if (Array.isArray(value)) {
-            value.forEach((item) => walk(item, depth + 1));
-            return;
-        }
-
-        if (typeof value !== 'object') return;
-        if (seen.has(value)) return;
-        seen.add(value);
-
-        for (const [key, item] of Object.entries(value)) {
-            const isRecordsArray = /^records\d+$/i.test(key) && Array.isArray(item);
-            if (isRecordsArray) {
-                item.forEach((record) => {
-                    if (!record || typeof record !== 'object') return;
-                    if (record.id !== undefined) addId(record.id);
-                });
-            }
-        }
-
-        Object.values(value).forEach((item) => walk(item, depth + 1));
-    }
-
-    walk(payload, 0);
-    return Array.from(ids);
-}
-
-async function getMedicalRecordsDocumentIds(projectId, sectionKey, pageUrl) {
-    if (!projectId || !sectionKey) return [];
-    if (!/^medicalrecords\d+$/i.test(sectionKey)) return [];
-
-    const key = sectionKey;
-    const origin = (() => {
-        if (pageUrl) {
-            try {
-                return new URL(pageUrl).origin;
-            } catch (error) {
-                // fall through
-            }
-        }
-        return window.location.origin;
-    })();
-
-    const reportMetaUrl = `${origin}/api/customSectionReportsByKey/${key}`;
-    const customDataUrl = `${origin}/api/projects/${projectId}/custom/${key}?page=1`;
-
-    const ids = new Set();
-
-    try {
-        const metaRes = await fetch(reportMetaUrl, {
-            method: 'GET',
-            credentials: 'include',
-            headers: { Accept: 'application/json, text/plain, */*' }
-        });
-        if (metaRes.ok) {
-            await metaRes.json();
-        }
-    } catch (error) {
-        // non-blocking
-    }
-
-    try {
-        const dataRes = await fetch(customDataUrl, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-                Accept: 'application/json, text/plain, */*',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({})
-        });
-        if (dataRes.ok) {
-            const payload = await dataRes.json();
-            extractMedicalRecordDocIdsFromCustomPayload(payload).forEach((id) => ids.add(id));
-        }
-    } catch (error) {
-        // non-blocking
-    }
-
-    return Array.from(ids);
-}
-
 async function downloadDocumentIdsSequentially(documentIds, pageUrl) {
+    const uniqueIds = Array.from(
+        new Set(
+            (documentIds || [])
+                .map((id) => String(id || '').trim())
+                .filter((id) => /^\d+$/.test(id))
+        )
+    );
+
     const perDocResults = [];
-    for (const id of documentIds) {
+    for (const id of uniqueIds) {
         const singleResult = await downloadDocumentById(id, pageUrl);
         perDocResults.push({
             id,
@@ -864,9 +548,9 @@ async function downloadDocumentIdsSequentially(documentIds, pageUrl) {
     const successCount = perDocResults.filter((r) => r.ok).length;
     return {
         ok: successCount > 0,
-        requested: documentIds.length,
+        requested: uniqueIds.length,
         succeeded: successCount,
-        failed: documentIds.length - successCount,
+        failed: uniqueIds.length - successCount,
         details: perDocResults
     };
 }
@@ -933,92 +617,6 @@ function extractDocumentIdFromDetails(payload, fallbackId) {
     }
 
     return walk(payload) || String(fallbackId || '');
-}
-
-async function downloadMultipleDocuments(projectId, documentIds, pageUrl) {
-    if (!projectId) {
-        return { ok: false, error: 'Missing project ID' };
-    }
-    if (!documentIds || !documentIds.length) {
-        return { ok: false, error: 'No selected document IDs found' };
-    }
-
-    const origin = (() => {
-        if (pageUrl) {
-            try {
-                return new URL(pageUrl).origin;
-            } catch (error) {
-                // Fall back below.
-            }
-        }
-        return window.location.origin;
-    })();
-
-    const endpoint = `${origin}/api/projects/${projectId}/multidocs/download`;
-    const payloadCandidates = [
-        { documentIds: documentIds },
-        { docIds: documentIds },
-        { ids: documentIds }
-    ];
-
-    let lastError = 'Unknown error';
-
-    for (const body of payloadCandidates) {
-        try {
-            const res = await fetch(endpoint, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Accept': 'application/json, text/plain, */*',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(body)
-            });
-
-            if (!res.ok) {
-                lastError = `Multi download API failed (${res.status})`;
-                continue;
-            }
-
-            let urls = [];
-            const contentType = (res.headers.get('content-type') || '').toLowerCase();
-            if (contentType.includes('application/json')) {
-                const payload = await res.json();
-                const out = new Set();
-                extractUrlsFromObject(payload, out);
-                urls = Array.from(out);
-            } else {
-                const textBody = (await res.text()).trim();
-                const maybeUrl = normalizeUrl(textBody);
-                if (maybeUrl && /^https?:/i.test(maybeUrl)) {
-                    urls = [maybeUrl];
-                }
-            }
-
-            if (!urls.length) {
-                lastError = 'Multi download API returned no downloadable URL';
-                continue;
-            }
-
-            urls.forEach((url) => {
-                chrome.runtime.sendMessage({
-                    type: 'DOWNLOAD_FILE',
-                    url: url
-                });
-            });
-
-            return {
-                ok: true,
-                mode: 'multi_download_api',
-                endpoint,
-                count: urls.length
-            };
-        } catch (error) {
-            lastError = error.message || 'Unknown error';
-        }
-    }
-
-    return { ok: false, error: lastError, endpoint };
 }
 
 async function downloadDocumentById(documentId, pageUrl) {

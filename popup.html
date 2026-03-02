@@ -305,6 +305,12 @@
             background: #5a6fd8;
         }
 
+        .footer-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         /* Scrollbar */
         .clicks-container::-webkit-scrollbar {
             width: 6px;
@@ -402,11 +408,11 @@
                 <span id="currentTime">--:--</span>
             </div>
             <div class="footer-actions">
-                <button id="downloadAllBtn">
-                    <i class="fas fa-download"></i> Download Files
-                 </button>
+                <button class="footer-btn" id="downloadAllBtn" title="Download Files">
+                    <i class="fas fa-file-arrow-down"></i> Download Files
+                </button>
                 <button class="footer-btn" id="exportBtn">
-                    <i class="fas fa-download"></i> Export
+                    <i class="fas fa-file-csv"></i> Export
                 </button>
             </div>
         </div>

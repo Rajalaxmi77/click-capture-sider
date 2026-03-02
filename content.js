@@ -361,6 +361,33 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
             return true;
         }
 
+        // No manual selection: download every visible document row on the current page.
+        const pageDocIds = getAllDocumentIdsOnPage();
+        if (pageDocIds.length > 0) {
+            const perDocResults = [];
+            (async () => {
+                for (const id of pageDocIds) {
+                    const singleResult = await downloadDocumentById(id, window.location.href);
+                    perDocResults.push({
+                        id,
+                        ok: !!singleResult?.ok,
+                        error: singleResult?.error || ''
+                    });
+                }
+
+                const successCount = perDocResults.filter((r) => r.ok).length;
+                sendResponse({
+                    ok: successCount > 0,
+                    mode: 'all_visible_docs_on_page',
+                    requested: pageDocIds.length,
+                    succeeded: successCount,
+                    failed: pageDocIds.length - successCount,
+                    details: perDocResults
+                });
+            })();
+            return true;
+        }
+
         const urls = downloadAllFilesOnPage();
         sendResponse({
             mode: 'page_scan',
@@ -508,6 +535,15 @@ function getAllSelectedDocumentIds() {
     const fromDom = getSelectedDocumentIdsFromDom();
     const merged = new Set([...fromDom, ...selectedDocumentIds]);
     return Array.from(merged);
+}
+
+function getAllDocumentIdsOnPage() {
+    const ids = new Set();
+    document.querySelectorAll('li[id^="list-item-doc-"]').forEach((el) => {
+        const match = el.id.match(/^list-item-doc-(\d+)$/);
+        if (match) ids.add(match[1]);
+    });
+    return Array.from(ids);
 }
 
 function extractDocumentIdFromDetails(payload, fallbackId) {

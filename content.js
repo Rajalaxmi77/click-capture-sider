@@ -474,9 +474,9 @@ function sanitizePathSegment(value) {
 function buildDownloadPath(projectId, spanName, fileName) {
     const projectFolder = `project-${String(projectId || 'unknown').trim()}`;
     const safeProject = sanitizePathSegment(projectFolder);
-    const safeSpan = sanitizePathSegment(spanName || 'Uncategorized');
+    const safeFolder = sanitizePathSegment(spanName || 'Uncategorized');
     const safeFile = sanitizePathSegment(fileName || 'document');
-    return `Filevine/${safeProject}/${safeSpan}/${safeFile}`;
+    return `Filevine/${safeProject}/${safeFolder}/${safeFile}`;
 }
 
 function emitDownloadStatus(status) {

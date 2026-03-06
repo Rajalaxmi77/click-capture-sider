@@ -7,6 +7,9 @@ const state = {
   activeFilter: 'all',
   searchText: '',
   loading: false,
+  capturedClicks: [], // Add this for download functionality
+  isCapturing: true,  // Add this for download functionality
+  currentFilter: 'all' // Add this for download functionality
 };
 
 function escapeHtml(value) {
@@ -62,13 +65,23 @@ function hideSyncStatus() {
 }
 
 function setSyncing(isSyncing) {
-  const syncBtn = document.getElementById('syncNowBtn');
+  const syncBtn = document.getElementById('downloadAllBtn'); // Changed from syncNowBtn to downloadAllBtn
   const syncIcon = document.getElementById('syncIcon');
   if (!syncBtn || !syncIcon) return;
 
   syncBtn.classList.toggle('syncing', isSyncing);
   syncBtn.disabled = isSyncing;
   syncIcon.classList.toggle('fa-spin', isSyncing);
+}
+
+function setDownloadStatus(message, tone = 'info') {
+  const downloadStatus = document.getElementById('downloadStatus');
+  if (!downloadStatus) return;
+  
+  downloadStatus.classList.remove('hidden', 'success', 'error');
+  if (tone === 'success') downloadStatus.classList.add('success');
+  if (tone === 'error') downloadStatus.classList.add('error');
+  downloadStatus.textContent = message;
 }
 
 function updateTime() {
@@ -304,6 +317,220 @@ async function fetchDemandNotes(full = true) {
   }
 }
 
+// ============================================
+// DOWNLOAD FUNCTIONALITY (from old popup.js)
+// ============================================
+
+function loadClicks() {
+  chrome.storage.local.get(['capturedClicks'], function(result) {
+    console.log('Loaded clicks from storage:', result.capturedClicks?.length || 0);
+    if (result.capturedClicks) {
+      state.capturedClicks = result.capturedClicks;
+    }
+  });
+}
+
+function saveClicks() {
+  chrome.storage.local.set({capturedClicks: state.capturedClicks}, function() {
+    console.log('Clicks saved to storage:', state.capturedClicks.length);
+  });
+}
+
+function addClick(clickData) {
+  if (!state.isCapturing) return;
+  
+  const newClick = {
+    type: clickData.type,
+    text: clickData.text || 'No text',
+    tagName: clickData.tagName,
+    classes: clickData.classes || '',
+    id: clickData.id || '',
+    href: clickData.href || '',
+    downloadUrl: clickData.downloadUrl || clickData.href || '',
+    documentId: clickData.documentId || '',
+    src: clickData.src || '',
+    alt: clickData.alt || '',
+    title: clickData.title || '',
+    name: clickData.name || '',
+    value: clickData.value || '',
+    role: clickData.role || '',
+    'aria-label': clickData['aria-label'] || '',
+    
+    position: clickData.position || null,
+    parent: clickData.parent || null,
+    childrenCount: clickData.childrenCount || 0,
+    path: clickData.path || '',
+    'data-*': clickData['data-*'] || null,
+    
+    pageUrl: clickData.pageUrl || 'Unknown',
+    pageTitle: clickData.pageTitle || '',
+    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'}),
+    timestamp: Date.now()
+  };
+  
+  state.capturedClicks.unshift(newClick);
+  
+  // Keep only last 500 clicks
+  if (state.capturedClicks.length > 500) {
+    state.capturedClicks = state.capturedClicks.slice(0, 500);
+  }
+  
+  saveClicks();
+}
+
+function buildDownloadFailedAlert(errorMessage) {
+  const detail = errorMessage || 'Unknown error';
+  return `Download failed.\nPlease make sure you are on the Filevine page and still logged in.\n\nError details: ${detail}`;
+}
+
+function handleDownloadStatusMessage(message) {
+  const total = Number(message.total || 0);
+  const completed = Number(message.completed || 0);
+  const succeeded = Number(message.succeeded || 0);
+  const failed = Number(message.failed || 0);
+
+  if (message.stage === 'started') {
+    setDownloadStatus(`Download in progress: 0/${total} files downloaded`, 'info');
+    return;
+  }
+
+  if (message.stage === 'in_progress') {
+    setDownloadStatus(
+      `Download in progress: ${completed}/${total} files downloaded (Success: ${succeeded}, Failed: ${failed})`,
+      failed > 0 ? 'error' : 'info'
+    );
+    return;
+  }
+
+  if (message.stage === 'completed') {
+    if (failed === 0 && total > 0) {
+      setDownloadStatus(
+        `All files downloaded successfully. Saved inside individual folders.`,
+        'success'
+      );
+    } else if (total === 0) {
+      setDownloadStatus('No files found to download.', 'error');
+    } else {
+      setDownloadStatus(
+        `Download completed with errors. Downloaded ${succeeded}/${total} files.`,
+        'error'
+      );
+    }
+    setTimeout(() => {
+      const downloadStatus = document.getElementById('downloadStatus');
+      if (downloadStatus) downloadStatus.classList.add('hidden');
+    }, 5000);
+  }
+}
+
+function downloadByDocumentId(documentId, pageUrl) {
+  if (!documentId) {
+    alert('No document ID found for this item.');
+    return;
+  }
+
+  chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+    if (!tabs || !tabs[0]) {
+      alert('No active tab found.');
+      return;
+    }
+
+    chrome.tabs.sendMessage(
+      tabs[0].id,
+      {
+        type: 'DOWNLOAD_DOCUMENT_BY_ID',
+        documentId: documentId,
+        pageUrl: pageUrl
+      },
+      function(response) {
+        if (chrome.runtime.lastError) {
+          alert(buildDownloadFailedAlert(chrome.runtime.lastError.message));
+          return;
+        }
+
+        if (!response || !response.ok) {
+          alert(buildDownloadFailedAlert(response?.error || 'Unknown error'));
+          return;
+        }
+
+        console.log('Download started from URL:', response.downloadUrl);
+        setDownloadStatus('Download started successfully!', 'success');
+        setTimeout(() => {
+          const downloadStatus = document.getElementById('downloadStatus');
+          if (downloadStatus) downloadStatus.classList.add('hidden');
+        }, 3000);
+      }
+    );
+  });
+}
+
+async function downloadAllFiles() {
+  setDownloadStatus('Download in progress: preparing files...', 'info');
+  
+  chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+    if (!tabs || !tabs[0]) {
+      setDownloadStatus('No active tab found', 'error');
+      return;
+    }
+    
+    chrome.tabs.sendMessage(tabs[0].id, {
+      type: 'DOWNLOAD_ALL_FILES'
+    }, function(response) {
+      if (chrome.runtime.lastError) {
+        setDownloadStatus(`Download failed: ${chrome.runtime.lastError.message}. Please refresh the page.`, 'error');
+        return;
+      }     
+
+      if (!response) return;
+      if (response.ok === false) {
+        setDownloadStatus(`Download failed: ${response.error || 'Unknown error'}`, 'error');
+        return;
+      }
+      
+      setDownloadStatus('Download completed successfully!', 'success');
+      setTimeout(() => {
+        const downloadStatus = document.getElementById('downloadStatus');
+        if (downloadStatus) downloadStatus.classList.add('hidden');
+      }, 3000);
+    });
+  });
+}
+
+function exportData() {
+  if (state.capturedClicks.length === 0) {
+    alert('No clicks to export');
+    return;
+  }
+  
+  const csvData = [
+    ['Type', 'Text', 'Tag', 'Classes', 'ID', 'Href', 'Time', 'Page URL'],
+    ...state.capturedClicks.map(click => [
+      click.type,
+      click.text,
+      click.tagName,
+      click.classes,
+      click.id || '',
+      click.href || '',
+      click.time,
+      click.pageUrl
+    ])
+  ].map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+  
+  const blob = new Blob([csvData], {type: 'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `clicks_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================
+// EVENT LISTENERS SETUP
+// ============================================
+
 function setupEventListeners() {
   document.querySelectorAll('.nav-tab').forEach((tab) => {
     tab.addEventListener('click', () => setActiveView(tab.dataset.view));
@@ -312,7 +539,7 @@ function setupEventListeners() {
   const logoutBtn = document.getElementById('logoutBtn');
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
-      await chrome.storage.local.remove(['authToken', 'user', 'isAuthenticated', 'authExpiry']);
+      await chrome.storage.local.remove(['authToken', 'user', 'isAuthenticated', 'authExpiry', 'capturedClicks']);
       window.location.href = 'login.html';
     });
   }
@@ -334,11 +561,16 @@ function setupEventListeners() {
     });
   });
 
-  const syncNowBtn = document.getElementById('syncNowBtn');
-  if (syncNowBtn) {
-    syncNowBtn.addEventListener('click', () => {
-      if (!state.loading) fetchDemandNotes(true);
-    });
+  // Download All button
+  const downloadAllBtn = document.getElementById('downloadAllBtn');
+  if (downloadAllBtn) {
+    downloadAllBtn.addEventListener('click', downloadAllFiles);
+  }
+
+  // Export button
+  const exportBtn = document.getElementById('exportBtn');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', exportData);
   }
 
   const listEl = document.getElementById('demandNotesList');
@@ -378,7 +610,8 @@ function populateUser(user) {
 }
 
 async function init() {
-  const authData = await chrome.storage.local.get(['authToken', 'user', 'isAuthenticated', 'authExpiry']);
+  const authData = await chrome.storage.local.get(['authToken', 'user', 'isAuthenticated', 'authExpiry', 'capturedClicks']);
+  
   if (!authData.isAuthenticated || !authData.authToken || authData.authExpiry <= Date.now()) {
     window.location.href = 'login.html';
     return;
@@ -386,13 +619,37 @@ async function init() {
 
   state.authToken = authData.authToken;
   state.user = authData.user || null;
-  populateUser(state.user);
+  
+  // Load captured clicks
+  if (authData.capturedClicks) {
+    state.capturedClicks = authData.capturedClicks;
+  }
 
+  populateUser(state.user);
   setupEventListeners();
   updateTime();
   setInterval(updateTime, 1000);
   setActiveView('demand-notes');
   await fetchDemandNotes(true);
+
+  // Set up Chrome message listener for download status
+  chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
+    console.log('Message received in popup:', message);
+    
+    if (message.type === 'CLICK_CAPTURED') {
+      addClick(message.data);
+    }
+    
+    if (message.type === 'CLICKS_UPDATED') {
+      state.capturedClicks = message.clicks;
+    }
+
+    if (message.type === 'DOWNLOAD_STATUS') {
+      handleDownloadStatusMessage(message);
+    }
+    
+    return true;
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

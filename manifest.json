@@ -11,7 +11,8 @@
     "downloads"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "http://localhost:3000/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -26,6 +27,7 @@
   ],
   "action": {
     "default_title": "Click Capture",
+    "default_popup": "login.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

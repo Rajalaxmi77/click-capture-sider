@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Click Capture</title>
+    <title>Legasys Quick Access</title>
     <style>
         * {
             margin: 0;
@@ -18,343 +18,531 @@
         }
 
         body {
-            min-width: 440px;
-            min-height: 100vh;
-            background: #f5f7fa;
+            background: #f8fafc;
             overflow: hidden;
         }
 
         .container {
             width: 100%;
             height: 100%;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
-            background: white;
         }
 
         /* Header */
         .header {
-            padding: 16px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
             color: white;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            padding: 16px;
         }
 
-        .logo {
+        .user-info {
             display: flex;
             align-items: center;
             gap: 12px;
         }
 
-        .logo-icon {
-            width: 36px;
-            height: 36px;
-            background: rgba(255, 255, 255, 0.2);
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            background: #334155;
             border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
-        }
-
-        .title h2 {
-            font-size: 18px;
             font-weight: 600;
+            color: #94a3b8;
         }
 
-        .title p {
-            font-size: 12px;
-            opacity: 0.9;
-            margin-top: 2px;
+        .user-details {
+            flex: 1;
         }
 
-        .controls {
-            display: flex;
-            gap: 8px;
+        .user-name {
+            font-weight: 600;
+            font-size: 14px;
         }
 
-        .btn {
-            width: 36px;
-            height: 36px;
-            border: none;
+        .user-role {
+            font-size: 11px;
+            color: #94a3b8;
+        }
+
+        .logout-btn {
+            background: transparent;
+            border: 1px solid #475569;
+            color: #94a3b8;
+            width: 32px;
+            height: 32px;
             border-radius: 8px;
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             transition: all 0.2s;
         }
 
-        .btn:hover {
-            background: rgba(255, 255, 255, 0.3);
+        .logout-btn:hover {
+            background: #dc2626;
+            border-color: #dc2626;
+            color: white;
         }
 
-        /* Stats */
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            padding: 16px;
-            background: white;
-            border-bottom: 1px solid #eaeaea;
-        }
-
-        .stat-card {
-            background: #f8f9fa;
-            padding: 12px;
-            border-radius: 8px;
-            text-align: center;
-        }
-
-        .stat-icon {
-            font-size: 20px;
-            color: #667eea;
-            margin-bottom: 8px;
-        }
-
-        .stat-value {
-            font-size: 20px;
-            font-weight: bold;
-            color: #333;
-        }
-
-        .stat-label {
-            font-size: 12px;
-            color: #666;
-            margin-top: 4px;
-        }
-
-        /* Filters */
-        .filters {
+        /* Navigation Tabs */
+        .nav-tabs {
             display: flex;
-            padding: 12px 16px;
-            gap: 8px;
             background: white;
-            border-bottom: 1px solid #eaeaea;
-            overflow-x: auto;
+            border-bottom: 1px solid #e2e8f0;
+            padding: 0 16px;
         }
 
-        .filter-btn {
-            padding: 6px 12px;
-            border: 1px solid #e0e0e0;
-            background: white;
-            border-radius: 20px;
-            font-size: 12px;
+        .nav-tab {
+            padding: 14px 16px;
+            font-size: 14px;
             font-weight: 500;
-            color: #666;
+            color: #64748b;
             cursor: pointer;
-            white-space: nowrap;
+            border-bottom: 2px solid transparent;
             transition: all 0.2s;
         }
 
-        .filter-btn:hover {
-            border-color: #667eea;
-            color: #667eea;
+        .nav-tab:hover {
+            color: #3b82f6;
         }
 
-        .filter-btn.active {
-            background: #667eea;
-            border-color: #667eea;
-            color: white;
+        .nav-tab.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
         }
 
-        /* Clicks List */
-        .clicks-container {
+        /* Main Content Area */
+        .content-area {
             flex: 1;
             overflow-y: auto;
             padding: 16px;
+            background: #f8fafc;
         }
 
-        .download-status {
-            margin: 10px 16px 0;
-            padding: 10px 12px;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 500;
-            border: 1px solid #dbeafe;
-            background: #eff6ff;
-            color: #1d4ed8;
-        }
-
-        .download-status.success {
-            border-color: #bbf7d0;
-            background: #f0fdf4;
-            color: #166534;
-        }
-
-        .download-status.error {
-            border-color: #fecaca;
-            background: #fef2f2;
-            color: #991b1b;
-        }
-
-        .download-status.hidden {
+        /* View Container */
+        .view-container {
             display: none;
         }
 
+        .view-container.active {
+            display: block;
+        }
+
+        /* Header with Actions */
+        .view-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .view-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .add-btn {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .add-btn:hover {
+            background: #2563eb;
+        }
+
+        .add-btn.sync-btn {
+            background: #10b981;
+        }
+
+        .add-btn.sync-btn:hover {
+            background: #059669;
+        }
+
+        .add-btn.syncing {
+            background: #6b7280;
+            cursor: wait;
+            pointer-events: none;
+        }
+
+        /* Search Bar */
+        .search-bar {
+            margin-bottom: 16px;
+            position: relative;
+        }
+
+        .search-bar input {
+            width: 100%;
+            padding: 10px 16px 10px 40px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 13px;
+            background: white;
+        }
+
+        .search-bar i {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 14px;
+        }
+
+        /* Filter Chips */
+        .filter-chips {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .filter-chip {
+            padding: 6px 12px;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 20px;
+            font-size: 12px;
+            color: #64748b;
+            cursor: pointer;
+        }
+
+        .filter-chip.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+
+        /* Sync Status */
+        .sync-status {
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            color: #0369a1;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sync-status.success {
+            background: #f0fdf4;
+            border-color: #bbf7d0;
+            color: #166534;
+        }
+
+        .sync-status.error {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: #991b1b;
+        }
+
+        .sync-status.hidden {
+            display: none;
+        }
+
+        .sync-spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e2e8f0;
+            border-top: 2px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* Demand Note Cards */
+        .demand-note-card {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border: 1px solid #e2e8f0;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .demand-note-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-color: #3b82f6;
+        }
+
+        .demand-note-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
+        .demand-note-title {
+            font-weight: 600;
+            color: #1e293b;
+            font-size: 15px;
+        }
+
+        .demand-note-status {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-draft { background: #f1f5f9; color: #475569; }
+        .status-pending { background: #fff7ed; color: #9a3412; }
+        .status-approved { background: #ecfdf5; color: #065f46; }
+        .status-rejected { background: #fef2f2; color: #991b1b; }
+
+        .demand-note-meta {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .demand-note-client {
+            font-weight: 500;
+            color: #334155;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .demand-note-preview {
+            font-size: 13px;
+            color: #64748b;
+            line-height: 1.4;
+            margin-bottom: 12px;
+        }
+
+        .demand-note-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: #94a3b8;
+        }
+
+        .demand-note-tags {
+            display: flex;
+            gap: 6px;
+        }
+
+        .tag {
+            background: #f1f5f9;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            color: #475569;
+        }
+
+        /* Detail View */
+        .detail-view {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .detail-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .back-btn {
+            background: none;
+            border: none;
+            color: #64748b;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+
+        .back-btn:hover {
+            color: #3b82f6;
+        }
+
+        .detail-section {
+            margin-bottom: 20px;
+        }
+
+        .detail-section-title {
+            font-weight: 600;
+            color: #334155;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            background: #f8fafc;
+            padding: 16px;
+            border-radius: 8px;
+        }
+
+        .detail-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .detail-label {
+            font-size: 11px;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+
+        .detail-value {
+            font-size: 14px;
+            color: #1e293b;
+            font-weight: 500;
+        }
+
+        /* Loading State */
+        .loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: #64748b;
+        }
+
+        .loading-spinner {
+            border: 3px solid #f1f5f9;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 12px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Empty State */
         .empty-state {
             text-align: center;
             padding: 60px 20px;
-            color: #999;
+            color: #94a3b8;
         }
 
         .empty-icon {
             font-size: 48px;
+            color: #cbd5e1;
             margin-bottom: 16px;
-            opacity: 0.5;
         }
 
         .empty-text {
             font-size: 14px;
             margin-bottom: 8px;
+            color: #475569;
         }
 
         .empty-subtext {
             font-size: 12px;
-            color: #aaa;
-        }
-
-        /* Click Item */
-        .click-item {
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 12px;
-            border-left: 4px solid #667eea;
-            transition: all 0.2s;
-        }
-
-        .click-item:hover {
-            background: #f0f2f5;
-            transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-
-        .click-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 8px;
-        }
-
-        .click-text {
-            font-weight: 500;
-            color: #333;
-            font-size: 14px;
-            max-width: 70%;
-            word-break: break-word;
-        }
-
-        .click-type {
-            font-size: 11px;
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .type-link { background: #4dabf7; color: white; }
-        .type-button { background: #40c057; color: white; }
-        .type-input { background: #fab005; color: white; }
-        .type-div { background: #7950f2; color: white; }
-        .type-span { background: #e8590c; color: white; }
-        .type-other { background: #868e96; color: white; }
-
-        .click-details {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 8px;
-        }
-
-        .detail-row {
-            margin-bottom: 4px;
-            display: flex;
-            align-items: flex-start;
-        }
-
-        .detail-label {
-            min-width: 60px;
-            color: #888;
-            font-weight: 500;
-        }
-
-        .detail-value {
-            flex: 1;
-            word-break: break-all;
-        }
-
-        .click-meta {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: #999;
         }
 
         /* Footer */
         .footer {
             padding: 12px 16px;
             background: white;
-            border-top: 1px solid #eaeaea;
+            border-top: 1px solid #e2e8f0;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
-        .time-info {
-            font-size: 12px;
-            color: #666;
+        .footer-left {
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 12px;
         }
 
-        .footer-btn {
-            padding: 6px 12px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 6px;
+        .footer-logo {
+            font-weight: 600;
+            color: #1e293b;
             font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            transition: all 0.2s;
         }
 
-        .footer-btn:hover {
-            background: #5a6fd8;
+        .footer-time {
+            font-size: 11px;
+            color: #94a3b8;
         }
 
         .footer-actions {
             display: flex;
-            align-items: center;
             gap: 8px;
         }
 
+        .footer-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
+        }
+
+        .sync-footer-btn {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .sync-footer-btn:hover {
+            background: #2563eb;
+        }
+
+        .sync-footer-btn.syncing {
+            background: #6b7280;
+            cursor: wait;
+        }
+
+        .export-footer-btn {
+            background: #10b981;
+            color: white;
+        }
+
+        .export-footer-btn:hover {
+            background: #059669;
+        }
+
         /* Scrollbar */
-        .clicks-container::-webkit-scrollbar {
+        .content-area::-webkit-scrollbar {
             width: 6px;
         }
 
-        .clicks-container::-webkit-scrollbar-track {
+        .content-area::-webkit-scrollbar-track {
             background: #f1f1f1;
-            border-radius: 3px;
         }
 
-        .clicks-container::-webkit-scrollbar-thumb {
+        .content-area::-webkit-scrollbar-thumb {
             background: #ccc;
             border-radius: 3px;
-        }
-
-        .clicks-container::-webkit-scrollbar-thumb:hover {
-            background: #aaa;
         }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -363,73 +551,119 @@
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <div class="logo">
-                <div class="logo-icon">
-                    <i class="fas fa-mouse-pointer"></i>
+            <div class="user-info">
+                <div class="user-avatar" id="userAvatar">JD</div>
+                <div class="user-details">
+                    <div class="user-name" id="userName">Loading...</div>
+                    <div class="user-role" id="userRole">Loading...</div>
                 </div>
-                <div class="title">
-                    <h2>Click Capture</h2>
-                    <p>Capturing all clicks</p>
-                </div>
-            </div>
-            <div class="controls">
-                <button class="btn" id="toggleBtn" title="Pause/Resume">
-                    <i class="fas fa-pause"></i>
-                </button>
-                <button class="btn" id="clearBtn" title="Clear All">
-                    <i class="fas fa-trash"></i>
+                <button class="logout-btn" id="logoutBtn" title="Logout">
+                    <i class="fas fa-sign-out-alt"></i>
                 </button>
             </div>
         </div>
 
-        <!-- Stats -->
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-icon">
-                    <i class="fas fa-mouse-pointer"></i>
-                </div>
-                <div class="stat-value" id="totalCount">0</div>
-                <div class="stat-label">Total Clicks</div>
+        <!-- Navigation Tabs -->
+        <div class="nav-tabs">
+            <div class="nav-tab active" data-view="demand-notes">
+                <i class="fas fa-file-pen" style="margin-right: 6px;"></i>Demand Notes
             </div>
-            <div class="stat-card">
-                <div class="stat-icon">
-                    <i class="fas fa-link"></i>
-                </div>
-                <div class="stat-value" id="linkCount">0</div>
-                <div class="stat-label">Links</div>
+            <div class="nav-tab" data-view="documents">
+                <i class="fas fa-folder-open" style="margin-right: 6px;"></i>Documents
             </div>
-            <div class="stat-card">
-                <div class="stat-icon">
-                    <i class="fas fa-square"></i>
-                </div>
-                <div class="stat-value" id="buttonCount">0</div>
-                <div class="stat-label">Buttons</div>
+            <div class="nav-tab" data-view="intake">
+                <i class="fas fa-clipboard-list" style="margin-right: 6px;"></i>Intake
             </div>
         </div>
 
-        <!-- Filters -->
-        <div class="filters">
-            <button class="filter-btn active" data-filter="all">All</button>
-            <button class="filter-btn" data-filter="link">Links</button>
-            <button class="filter-btn" data-filter="button">Buttons</button>
-            <button class="filter-btn" data-filter="input">Inputs</button>
-            <button class="filter-btn" data-filter="div">Divs</button>
-            <button class="filter-btn" data-filter="span">Spans</button>
+        <!-- Sync Status -->
+        <div class="sync-status hidden" id="syncStatus">
+            <div class="sync-spinner"></div>
+            <span id="syncStatusMessage">Syncing data...</span>
         </div>
-        <div class="download-status hidden" id="downloadStatus"></div>
 
-        <!-- Clicks List -->
-        <div class="clicks-container" id="clicksList">
-            <div class="empty-state">
-                <div class="empty-icon">
-                    <i class="fas fa-mouse-pointer"></i>
+        <!-- Main Content Area -->
+        <div class="content-area" id="contentArea">
+            <!-- Demand Notes View -->
+            <div class="view-container active" id="demandNotesView">
+                <div class="view-header">
+                    <div class="view-title">Demand Notes</div>
+                    <button class="add-btn" id="addDemandNoteBtn">
+                        <i class="fas fa-plus"></i> New Note
+                    </button>
                 </div>
-                <div class="empty-text">Click anywhere to start capturing</div>
-                <div class="empty-subtext">All clicks will appear here in real-time</div>
+
+                <div class="search-bar">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchDemandNotes" placeholder="Search demand notes...">
+                </div>
+
+                <div class="filter-chips" id="demandNoteFilters">
+                    <span class="filter-chip active" data-filter="all">All</span>
+                    <span class="filter-chip" data-filter="draft">Draft</span>
+                    <span class="filter-chip" data-filter="pending">Pending</span>
+                    <span class="filter-chip" data-filter="approved">Approved</span>
+                </div>
+
+                <div id="demandNotesList"></div>
+            </div>
+
+            <!-- Documents View -->
+            <div class="view-container" id="documentsView">
+                <div class="view-header">
+                    <div class="view-title">Documents</div>
+                    <button class="add-btn" id="uploadDocumentBtn">
+                        <i class="fas fa-upload"></i> Upload
+                    </button>
+                </div>
+                <div class="search-bar">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchDocuments" placeholder="Search documents...">
+                </div>
+                <div id="documentsList">
+                    <div class="empty-state">
+                        <div class="empty-icon"><i class="fas fa-folder-open"></i></div>
+                        <div class="empty-text">No documents found</div>
+                        <div class="empty-subtext">Click "Upload" to add documents</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Intake View -->
+            <div class="view-container" id="intakeView">
+                <div class="view-header">
+                    <div class="view-title">Intake Lists</div>
+                    <button class="add-btn" id="newIntakeBtn">
+                        <i class="fas fa-plus"></i> New Intake
+                    </button>
+                </div>
+                <div class="search-bar">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchIntake" placeholder="Search intake...">
+                </div>
+                <div id="intakeList">
+                    <div class="empty-state">
+                        <div class="empty-icon"><i class="fas fa-clipboard-list"></i></div>
+                        <div class="empty-text">No intake records found</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Demand Note Detail View -->
+            <div class="view-container" id="demandNoteDetailView">
+                <div class="detail-header">
+                    <button class="back-btn" id="backToDemandNotes">
+                        <i class="fas fa-arrow-left"></i> Back to Demand Notes
+                    </button>
+                    <button class="add-btn" id="editDemandNoteBtn" style="background: #64748b;">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
+                </div>
+                <div id="demandNoteDetail"></div>
             </div>
         </div>
 
-        <!-- Footer -->
+        <!-- Footer with Sync Now -->
         <div class="footer">
             <div class="time-info">
                 <i class="far fa-clock"></i>

@@ -2,6 +2,10 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
@@ -9,13 +13,64 @@ const app = express();
 const port = process.env.PORT || 3001;
 const prisma = new PrismaClient();
 
+// Configure multer for file uploads
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadsDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  fileFilter: function (req, file, cb) {
+    // Allow all file types
+    cb(null, true);
+  }
+});
+
 // Middleware
+const allowedOriginPatterns = [
+  /^chrome-extension:\/\/[a-z0-9]+$/i,
+  /^https?:\/\/localhost(?::\d+)?$/i,
+  /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
+  /^https?:\/\/([a-z0-9-]+\.)*filevineapp\.com$/i,
+  /^https?:\/\/([a-z0-9-]+\.)*vinesign\.com$/i
+];
+
 app.use(cors({
-  origin: ['chrome-extension://*'], // Allow your extension
+  origin: (origin, callback) => {
+    // Allow non-browser or same-origin requests with no Origin header.
+    if (!origin) return callback(null, true);
+    const isAllowed = allowedOriginPatterns.some((pattern) => pattern.test(origin));
+    if (isAllowed) return callback(null, true);
+    return callback(new Error(`CORS blocked for origin: ${origin}`), false);
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Authorization', 'Content-Type']
 }));
+
+// Allow secure public sites (e.g., filevineapp.com) to call local backend on localhost.
+app.use((req, res, next) => {
+  if (req.headers['access-control-request-private-network'] === 'true') {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  }
+  next();
+});
 app.use(express.json());
+
+// Serve uploaded files
+app.use('/uploads', express.static(uploadsDir));
 
 // JWT Secret (prefer JWT_SECRET, fallback to NEXTAUTH_SECRET for compatibility)
 const JWT_SECRET = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'your-fallback-secret';
@@ -390,6 +445,162 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     database: 'connected'
   });
+});
+
+// File upload endpoint
+// Upload a file and associate it with a demand note
+app.post('/api/upload', authenticateRequest, upload.single('file'), async (req, res) => {
+  try {
+    const { demandNoteId, fileCategory } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file provided' });
+    }
+    
+    if (!demandNoteId) {
+      // Delete the uploaded file if no demand note ID
+      if (req.file && req.file.path) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(400).json({ error: 'Demand note ID is required' });
+    }
+    
+    // Verify the demand note exists
+    const demandNote = await prisma.$queryRaw`
+      SELECT id, title, "clientName" FROM "DemandNote" WHERE id = ${demandNoteId} LIMIT 1
+    `;
+    
+    if (!Array.isArray(demandNote) || demandNote.length === 0) {
+      // Delete the uploaded file if demand note not found
+      if (req.file && req.file.path) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(404).json({ error: 'Demand note not found' });
+    }
+    
+    // Determine file type from original filename
+    const originalName = req.file.originalname || '';
+    const fileExt = path.extname(originalName).toLowerCase();
+    const fileType = fileExt ? fileExt.slice(1) : 'unknown';
+    
+    // Create the file record in the database
+    // The file URL will be served statically
+    const fileUrl = `/uploads/${req.file.filename}`;
+    
+    const createdFile = await prisma.$queryRaw`
+      INSERT INTO "DemandFile" (
+        id, 
+        "fileName", 
+        "fileUrl", 
+        "fileType", 
+        size, 
+        "demandNoteId", 
+        status, 
+        "summaryStatus",
+        "createdAt"
+       
+      ) VALUES (
+        ${uuidv4()},
+        ${originalName},
+        ${fileUrl},
+        ${fileType},
+        ${req.file.size},
+        ${demandNoteId},
+        'active',
+        'pending',
+       
+        ${new Date()}
+      )
+      RETURNING id, "fileName", "fileUrl", "fileType", size, "demandNoteId", status, "createdAt"
+    `;
+    
+    if (!Array.isArray(createdFile) || createdFile.length === 0) {
+      // Delete the uploaded file if database insert failed
+      if (req.file && req.file.path) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(500).json({ error: 'Failed to save file record' });
+    }
+    
+    const file = createdFile[0];
+    
+    console.log(`File uploaded successfully: ${originalName} for demand note ${demandNoteId}`);
+    
+    res.json({
+      success: true,
+      file: {
+        id: file.id,
+        fileName: file.fileName,
+        fileUrl: file.fileUrl,
+        fileType: file.fileType,
+        size: Number(file.size),
+        demandNoteId: file.demandNoteId,
+        status: file.status,
+        createdAt: file.createdAt
+      }
+    });
+    
+  } catch (error) {
+    console.error('File upload error:', error);
+    
+    // Clean up uploaded file on error
+    if (req.file && req.file.path) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (cleanupError) {
+        console.error('Error cleaning up file:', cleanupError);
+      }
+    }
+    
+    res.status(500).json({ error: 'Failed to upload file' });
+  }
+});
+
+// Get uploaded files for a demand note
+app.get('/api/demand-notes/:id/files', authenticateRequest, async (req, res) => {
+  try {
+    const demandNoteId = String(req.params.id || '').trim();
+    
+    if (!demandNoteId) {
+      return res.status(400).json({ error: 'Demand note ID is required' });
+    }
+    
+    const files = await prisma.$queryRaw`
+      SELECT
+        id,
+        "fileName",
+        "fileUrl",
+        "fileType",
+        size,
+        "demandNoteId",
+        status,
+        "summaryStatus",
+        "createdAt",
+        "updatedAt"
+      FROM "DemandFile"
+      WHERE "demandNoteId" = ${demandNoteId}
+      ORDER BY "createdAt" DESC
+    `;
+    
+    res.json({
+      files: Array.isArray(files) ? files.map(f => ({
+        id: f.id,
+        fileName: f.fileName,
+        fileUrl: f.fileUrl,
+        fileType: f.fileType,
+        size: Number(f.size),
+        demandNoteId: f.demandNoteId,
+        status: f.status,
+        summaryStatus: f.summaryStatus,
+        createdAt: f.createdAt,
+        updatedAt: f.updatedAt
+      })) : []
+    });
+    
+  } catch (error) {
+    console.error('Error fetching files:', error);
+    res.status(500).json({ error: 'Failed to fetch files' });
+  }
 });
 
 // Error handling middleware

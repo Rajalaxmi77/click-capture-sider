@@ -9,7 +9,8 @@ const state = {
   loading: false,
   capturedClicks: [], // Add this for download functionality
   isCapturing: true,  // Add this for download functionality
-  currentFilter: 'all' // Add this for download functionality
+  currentFilter: 'all', // Add this for download functionality
+  currentDemandNoteId: null // Track current demand note for sync
 };
 
 function escapeHtml(value) {
@@ -72,6 +73,35 @@ function setSyncing(isSyncing) {
   syncBtn.classList.toggle('syncing', isSyncing);
   syncBtn.disabled = isSyncing;
   syncIcon.classList.toggle('fa-spin', isSyncing);
+}
+
+function setDetailSyncStatus(message, tone = 'info') {
+  const statusEl = document.getElementById('detailSyncStatus');
+  const msgEl = document.getElementById('detailSyncStatusMessage');
+  if (!statusEl || !msgEl) return;
+
+  statusEl.classList.remove('hidden', 'success', 'error');
+  if (tone === 'success') statusEl.classList.add('success');
+  if (tone === 'error') statusEl.classList.add('error');
+  msgEl.textContent = message;
+}
+
+function hideDetailSyncStatus() {
+  const statusEl = document.getElementById('detailSyncStatus');
+  if (!statusEl) return;
+  statusEl.classList.add('hidden');
+}
+
+function setDetailSyncing(isSyncing) {
+  const syncBtn = document.getElementById('syncNowBtn');
+  const syncIcon = document.getElementById('syncNowIcon');
+  if (!syncBtn) return;
+
+  syncBtn.classList.toggle('syncing', isSyncing);
+  syncBtn.disabled = isSyncing;
+  if (syncIcon) {
+    syncIcon.classList.toggle('fa-spin', isSyncing);
+  }
 }
 
 function setDownloadStatus(message, tone = 'info') {
@@ -241,6 +271,9 @@ async function fetchDemandNoteDetail(noteId) {
 }
 
 async function openDemandNoteDetail(noteId) {
+  // Store the current demand note ID for sync
+  state.currentDemandNoteId = noteId;
+  
   const detailEl = document.getElementById('demandNoteDetail');
   if (detailEl) {
     detailEl.innerHTML = `
@@ -524,7 +557,106 @@ function exportData() {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+URL.revokeObjectURL(url);
+}
+
+// ============================================
+// SYNC FILES FOR DEMAND NOTE
+// ============================================
+
+async function syncFilesForDemandNote(demandNoteId) {
+  if (!demandNoteId) {
+    setDetailSyncStatus('No demand note selected', 'error');
+    return;
+  }
+
+  setDetailSyncStatus('Checking for Filevine page...', 'info');
+  setDetailSyncing(true);
+
+  try {
+    const syncTab = await new Promise((resolve) => {
+      chrome.tabs.query({ currentWindow: true }, (tabs) => {
+        const isFilevineTab = (tab) => {
+          const tabUrl = String(tab?.url || '').toLowerCase();
+          return tabUrl.includes('filevine') || tabUrl.includes('vinesign');
+        };
+
+        const activeTab = Array.isArray(tabs) ? tabs.find((tab) => tab.active) : null;
+        if (activeTab && isFilevineTab(activeTab)) {
+          resolve(activeTab);
+          return;
+        }
+
+        const filevineTab = Array.isArray(tabs) ? tabs.find(isFilevineTab) : null;
+        resolve(filevineTab || null);
+      });
+    });
+
+    if (!syncTab || !syncTab.id) {
+      setDetailSyncStatus('Open a Filevine project tab, then click Sync Now', 'error');
+      setDetailSyncing(false);
+      return;
+    }
+
+    setDetailSyncStatus('Downloading Medical Provider Records from Filevine...', 'info');
+
+    // Request downloads from content script - specifically for medical provider records
+    const downloadResult = await new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(
+        syncTab.id,
+        { 
+          type: 'SYNC_MEDICAL_RECORDS',
+          demandNoteId: demandNoteId,
+          authToken: state.authToken
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(response);
+          }
+        }
+      );
+    });
+
+    if (!downloadResult || downloadResult.ok === false) {
+      setDetailSyncStatus(`Download failed: ${downloadResult?.error || 'Unknown error'}`, 'error');
+      setDetailSyncing(false);
+      return;
+    }
+
+    const totalDownloaded = downloadResult.succeeded || 0;
+
+    if (totalDownloaded === 0) {
+      setDetailSyncStatus('No Medical Provider Records found to sync', 'error');
+      setDetailSyncing(false);
+      return;
+    }
+
+    setDetailSyncStatus(`Uploading ${totalDownloaded} Medical Provider Records to database...`, 'info');
+
+    // Now upload the files to the backend
+    const uploadedFiles = downloadResult.uploadedFiles || [];
+    
+    if (uploadedFiles.length > 0) {
+      setDetailSyncStatus(`Successfully uploaded ${uploadedFiles.length} Medical Provider Records!`, 'success');
+    } else {
+      setDetailSyncStatus(`Downloaded ${totalDownloaded} files. Upload to backend pending.`, 'success');
+    }
+    
+    // Refresh the detail view
+    await openDemandNoteDetail(demandNoteId);
+
+    setTimeout(() => {
+      hideDetailSyncStatus();
+    }, 5000);
+
+  } catch (error) {
+    console.error('Sync error:', error);
+    setDetailSyncStatus(`Sync failed: ${error.message}`, 'error');
+  } finally {
+    setDetailSyncing(false);
+  }
 }
 
 // ============================================
@@ -583,9 +715,28 @@ function setupEventListeners() {
     });
   }
 
-  const backBtn = document.getElementById('backToDemandNotes');
+const backBtn = document.getElementById('backToDemandNotes');
   if (backBtn) {
     backBtn.addEventListener('click', () => setActiveView('demand-notes'));
+  }
+
+// Sync Now button in detail view
+  const syncNowBtn = document.getElementById('syncNowBtn');
+  if (syncNowBtn) {
+    syncNowBtn.addEventListener('click', () => {
+      console.log('=== Sync Now button clicked ===');
+      console.log('currentDemandNoteId:', state.currentDemandNoteId);
+      console.log('authToken exists:', !!state.authToken);
+      
+      if (state.currentDemandNoteId) {
+        syncFilesForDemandNote(state.currentDemandNoteId);
+      } else {
+        console.error('No demand note selected - currentDemandNoteId is null');
+        setDetailSyncStatus('No demand note selected', 'error');
+      }
+    });
+  } else {
+    console.error('syncNowBtn not found in DOM');
   }
 }
 

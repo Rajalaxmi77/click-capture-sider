@@ -151,6 +151,84 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                 // Side panel might not be open.
             });
             break;
+
+        case 'UPLOAD_FILE_TO_BACKEND':
+            (async () => {
+                try {
+                    const { authToken, blob, fileName, demandNoteId, fileCategory, fileUrl, apiOrigin } = message || {};
+
+                    if (!authToken) {
+                        sendResponse({ success: false, error: 'Missing auth token' });
+                        return;
+                    }
+
+                    if (!demandNoteId) {
+                        sendResponse({ success: false, error: 'Missing demand note ID' });
+                        return;
+                    }
+
+                    let fileBlob = blob || null;
+                    if (!fileBlob && fileUrl) {
+                        const normalizedUrl = String(fileUrl || '').startsWith('http')
+                            ? String(fileUrl)
+                            : `${String(apiOrigin || '').replace(/\/$/, '')}${String(fileUrl || '')}`;
+
+                        const fetchOptions = { method: 'GET' };
+                        if (/^https?:/i.test(normalizedUrl)) {
+                            fetchOptions.credentials = 'include';
+                        }
+
+                        const fileRes = await fetch(normalizedUrl, fetchOptions);
+                        if (!fileRes.ok) {
+                            sendResponse({
+                                success: false,
+                                error: `Failed to fetch file for upload (${fileRes.status})`
+                            });
+                            return;
+                        }
+                        fileBlob = await fileRes.blob();
+                    }
+
+                    if (!fileBlob) {
+                        sendResponse({ success: false, error: 'Missing file payload (blob/url)' });
+                        return;
+                    }
+
+                    const formData = new FormData();
+                    formData.append('file', fileBlob, fileName || 'document.pdf');
+                    formData.append('demandNoteId', String(demandNoteId));
+                    formData.append('fileCategory', fileCategory || 'Document');
+
+                    const response = await fetch('http://localhost:3000/api/upload', {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${authToken}`
+                        },
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        const errorText = await response.text().catch(() => '');
+                        sendResponse({
+                            success: false,
+                            error: errorText || `Upload failed (${response.status})`
+                        });
+                        return;
+                    }
+
+                    const payload = await response.json().catch(() => ({}));
+                    sendResponse({
+                        success: true,
+                        file: payload?.file || null
+                    });
+                } catch (error) {
+                    sendResponse({
+                        success: false,
+                        error: error?.message || 'Upload failed in background'
+                    });
+                }
+            })();
+            break;
     }
 
     return true;

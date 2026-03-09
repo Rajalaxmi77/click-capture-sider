@@ -552,7 +552,7 @@
         <!-- Header -->
         <div class="header">
             <div class="user-info">
-                <div class="user-avatar" id="userAvatar">JD</div>
+                <div class="user-avatar" id="userAvatar">RS</div>
                 <div class="user-details">
                     <div class="user-name" id="userName">Loading...</div>
                     <div class="user-role" id="userRole">Loading...</div>
@@ -649,15 +649,25 @@
                 </div>
             </div>
 
-            <!-- Demand Note Detail View -->
+<!-- Demand Note Detail View -->
             <div class="view-container" id="demandNoteDetailView">
                 <div class="detail-header">
                     <button class="back-btn" id="backToDemandNotes">
                         <i class="fas fa-arrow-left"></i> Back to Demand Notes
                     </button>
-                    <button class="add-btn" id="editDemandNoteBtn" style="background: #64748b;">
-                        <i class="fas fa-edit"></i> Edit
-                    </button>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="add-btn sync-btn" id="syncNowBtn" title="Sync documents from Filevine">
+                            <i class="fas fa-sync-alt" id="syncNowIcon"></i> Sync Now
+                        </button>
+                        <button class="add-btn" id="editDemandNoteBtn" style="background: #64748b;">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                    </div>
+                </div>
+                <!-- Sync Status for Detail View -->
+                <div class="sync-status hidden" id="detailSyncStatus">
+                    <div class="sync-spinner"></div>
+                    <span id="detailSyncStatusMessage">Syncing documents...</span>
                 </div>
                 <div id="demandNoteDetail"></div>
             </div>

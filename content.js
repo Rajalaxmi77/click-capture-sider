@@ -378,6 +378,151 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         return true;
     }
     
+    // SYNC_MEDICAL_RECORDS - Download Medical Provider Records from Filevine and upload to backend
+    if (message.type === 'SYNC_MEDICAL_RECORDS') {
+        console.log('=== SYNC_MEDICAL_RECORDS received, demandNoteId:', message.demandNoteId);
+        
+        if (window.top !== window) {
+            sendResponse({
+                ok: false,
+                skipped: true,
+                reason: 'ignored_in_non_top_frame'
+            });
+            return true;
+        }
+
+        const projectId = getProjectIdFromUrl(window.location.href);
+        if (!projectId) {
+            sendResponse({
+                ok: false,
+                error: 'Missing project ID in current URL'
+            });
+            return true;
+        }
+
+        if (!message.authToken) {
+            sendResponse({
+                ok: false,
+                error: 'Authentication token required for upload'
+            });
+            return true;
+        }
+
+        const apiOrigin = getOriginFromPageUrl(window.location.href);
+        
+        (async () => {
+            try {
+                // Step 1: Get all documents from Filevine
+                const docsMenuUrl = buildProjectDocsMenuUrl(projectId, window.location.href);
+                const fromDocsMenuApi = await getDocumentsMenuProjectDocIds(projectId, docsMenuUrl || window.location.href);
+                
+                if (fromDocsMenuApi.ids.length === 0) {
+                    sendResponse({
+                        ok: false,
+                        error: 'No documents found in Filevine'
+                    });
+                    return;
+                }
+
+                // Step 2: Filter for Medical Provider Records only
+                const medicalRecordsIds = [];
+                const medicalRecordsMeta = {};
+                
+                fromDocsMenuApi.documents.forEach((doc) => {
+                    const lowerSpan = String(
+                        doc.searchText || `${doc.spanName || ''} ${doc.fileName || ''}`
+                    ).toLowerCase();
+                    // Match Medical Provider Records or similar variations
+                    if (lowerSpan.includes('medical') || lowerSpan.includes('provider') || lowerSpan.includes('record')) {
+                        medicalRecordsIds.push(doc.id);
+                        medicalRecordsMeta[doc.id] = doc;
+                    }
+                });
+
+                if (medicalRecordsIds.length === 0) {
+                    // Fallback: if category matching misses, sync all docs for this project.
+                    fromDocsMenuApi.documents.forEach((doc) => {
+                        medicalRecordsIds.push(doc.id);
+                        medicalRecordsMeta[doc.id] = doc;
+                    });
+                }
+
+                console.log(`Found ${medicalRecordsIds.length} Medical Provider Records to sync`);
+
+                // Step 3: Download and upload each Medical Provider Record
+                const uploadedFiles = [];
+                let succeeded = 0;
+                let failed = 0;
+
+                for (let i = 0; i < medicalRecordsIds.length; i++) {
+                    const docId = medicalRecordsIds[i];
+                    const docMeta = medicalRecordsMeta[docId];
+                    
+                    emitDownloadStatus({
+                        stage: 'in_progress',
+                        total: medicalRecordsIds.length,
+                        completed: i,
+                        succeeded,
+                        failed,
+                        currentId: docId,
+                        currentFile: docMeta?.fileName || ''
+                    });
+
+                    try {
+                        // Download the document
+                        const downloadResult = await downloadDocumentById(
+                            docId,
+                            window.location.href,
+                            docMeta,
+                            projectId
+                        );
+
+                        if (downloadResult?.ok) {
+                            const uploadResult = await uploadFileToBackend(
+                                message.authToken,
+                                null,
+                                docMeta?.fileName || `document-${docId}.pdf`,
+                                message.demandNoteId,
+                                'traffic',
+                                downloadResult.downloadUrl,
+                                apiOrigin
+                            );
+
+                            if (uploadResult?.success) {
+                                uploadedFiles.push(uploadResult.file);
+                                succeeded++;
+                            } else {
+                                failed++;
+                            }
+                        } else {
+                            failed++;
+                        }
+                    } catch (err) {
+                        console.error('Error syncing document:', docId, err);
+                        failed++;
+                    }
+                }
+
+                console.log(`Sync completed: ${succeeded} succeeded, ${failed} failed`);
+
+                sendResponse({
+                    ok: succeeded > 0,
+                    succeeded,
+                    failed,
+                    uploadedFiles
+                });
+
+            } catch (error) {
+                console.error('SYNC_MEDICAL_RECORDS error:', error);
+                sendResponse({
+                    ok: false,
+                    error: error.message || 'Unknown error during sync'
+                });
+            }
+        })();
+        return true;
+    }
+    
     return true;
 });
 
@@ -586,6 +731,45 @@ function extractDescendantFolderIds(treePayload) {
     return Array.from(ids);
 }
 
+function extractDocumentRowsFromPayload(docsPayload) {
+    const candidates = [
+        docsPayload,
+        docsPayload?.data,
+        docsPayload?.documents,
+        docsPayload?.items,
+        docsPayload?.rows,
+        docsPayload?.results,
+        docsPayload?.data?.documents,
+        docsPayload?.data?.items,
+        docsPayload?.data?.rows,
+        docsPayload?.result?.data
+    ];
+
+    for (const candidate of candidates) {
+        if (Array.isArray(candidate)) return candidate;
+    }
+
+    return [];
+}
+
+function getDocumentIdFromRow(row) {
+    const candidates = [
+        row?.id,
+        row?.docID,
+        row?.docId,
+        row?.documentID,
+        row?.documentId,
+        row?.document?.id
+    ];
+
+    for (const value of candidates) {
+        const id = String(value || '').trim();
+        if (/^\d+$/.test(id)) return id;
+    }
+
+    return '';
+}
+
 async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
     if (!projectId) {
         return { ids: [], documents: [], descendantFolderIDs: [], maxChildrenPerFolder: 500 };
@@ -650,18 +834,36 @@ async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
             if (!res.ok) continue;
 
             const docsPayload = await res.json();
-            const rows = Array.isArray(docsPayload?.data) ? docsPayload.data : [];
+            const rows = extractDocumentRowsFromPayload(docsPayload);
             const documents = [];
             const seenIds = new Set();
 
             rows.forEach((row) => {
-                const id = String(row?.id || '').trim();
+                const id = getDocumentIdFromRow(row);
                 if (!/^\d+$/.test(id) || seenIds.has(id)) return;
                 seenIds.add(id);
+                const spanName = pickSpanNameFromDocumentRow(row, folderNameById);
+                const fileName = pickFileNameFromDocumentRow(row, id);
+                const searchText = [
+                    spanName,
+                    fileName,
+                    row?.sectionName,
+                    row?.folderName,
+                    row?.parentFolderName,
+                    row?.groupName,
+                    row?.categoryName,
+                    row?.documentType,
+                    row?.docType
+                ]
+                    .filter((value) => typeof value === 'string' && value.trim())
+                    .join(' ')
+                    .toLowerCase();
+
                 documents.push({
                     id,
-                    fileName: pickFileNameFromDocumentRow(row, id),
-                    spanName: pickSpanNameFromDocumentRow(row, folderNameById)
+                    fileName,
+                    spanName,
+                    searchText
                 });
             });
 
@@ -927,6 +1129,8 @@ async function downloadDocumentById(documentId, pageUrl, documentMeta = null, pr
                 resolvedFileName;
             const blobPath = buildDownloadPath(resolvedProjectId, resolvedSpanName, fileNameFromHeader);
             const dataUrl = await blobToDataUrl(blob);
+            // Reuse data URL for upload fallback when direct file URL is not available.
+            finalFileUrl = dataUrl;
             chrome.runtime.sendMessage({
                 type: 'DOWNLOAD_FILE',
                 url: dataUrl,
@@ -950,6 +1154,96 @@ async function downloadDocumentById(documentId, pageUrl, documentMeta = null, pr
             existsUrl,
             existsResponse
         };
+    }
+}
+
+// Helper function to get file content for upload (fetch file as blob)
+async function getFileContentForUpload(downloadUrl, documentMeta, apiOrigin) {
+    try {
+        // Extract document ID from the download URL or use metadata
+        let docId = documentMeta?.id || '';
+        let fileName = documentMeta?.fileName || 'document.pdf';
+        
+        // If downloadUrl is a data URL, we need to convert it back to blob
+        if (downloadUrl.startsWith('data:')) {
+            // Parse data URL to get blob
+            const response = await fetch(downloadUrl);
+            const blob = await response.blob();
+            return {
+                blob: blob,
+                fileName: fileName
+            };
+        }
+        
+        // Otherwise fetch from the URL
+        const urlToFetch = downloadUrl.startsWith('http') ? downloadUrl : `${apiOrigin}${downloadUrl}`;
+        
+        const res = await fetch(urlToFetch, {
+            method: 'GET',
+            credentials: 'include'
+        });
+        
+        if (!res.ok) {
+            console.error('Failed to fetch file for upload:', res.status);
+            return null;
+        }
+        
+        const blob = await res.blob();
+        
+        // Try to get filename from content-disposition header
+        const contentDisposition = res.headers.get('content-disposition');
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            if (match && match[1]) {
+                fileName = match[1].replace(/['"]/g, '');
+            }
+        }
+        
+        return {
+            blob: blob,
+            fileName: fileName
+        };
+    } catch (error) {
+        console.error('Error getting file content for upload:', error);
+        return null;
+    }
+}
+
+// Helper function to upload file to backend API
+async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, fileCategory, fileUrl = '', apiOrigin = '') {
+    try {
+        const result = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({
+                type: 'UPLOAD_FILE_TO_BACKEND',
+                authToken,
+                blob,
+                fileName,
+                demandNoteId,
+                fileCategory: fileCategory || 'Document',
+                fileUrl,
+                apiOrigin
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    resolve({
+                        success: false,
+                        error: chrome.runtime.lastError.message
+                    });
+                    return;
+                }
+                resolve(response || { success: false, error: 'No response from background' });
+            });
+        });
+
+        if (!result?.success) {
+            console.error('Upload failed:', result?.error || 'Unknown upload error');
+            return { success: false, error: result?.error || 'Upload failed' };
+        }
+
+        console.log('File uploaded successfully:', result.file?.fileName);
+        return { success: true, file: result.file };
+    } catch (error) {
+        console.error('Upload error:', error);
+        return { success: false, error: error.message };
     }
 }
 

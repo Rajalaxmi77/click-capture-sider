@@ -449,10 +449,19 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
 
                 console.log(`Found ${medicalRecordsIds.length} Medical Provider Records to sync`);
 
+                // Step 2.5: Fetch already uploaded files for this demand note and skip duplicates
+                const existingFilesResult = await getDemandNoteFilesFromBackend(message.authToken, message.demandNoteId);
+                const uploadedNameSet = new Set(
+                    (existingFilesResult?.files || [])
+                        .map((f) => normalizeFileNameForMatch(f?.fileName))
+                        .filter(Boolean)
+                );
+
                 // Step 3: Download and upload each Medical Provider Record
                 const uploadedFiles = [];
                 let succeeded = 0;
                 let failed = 0;
+                let skipped = 0;
 
                 for (let i = 0; i < medicalRecordsIds.length; i++) {
                     const docId = medicalRecordsIds[i];
@@ -469,27 +478,38 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                     });
 
                     try {
+                        const expectedFileName = docMeta?.fileName || `document-${docId}.pdf`;
+                        const normalizedExpectedName = normalizeFileNameForMatch(expectedFileName);
+
+                        // If already uploaded in DemandFile, skip both download and upload.
+                        if (normalizedExpectedName && uploadedNameSet.has(normalizedExpectedName)) {
+                            skipped++;
+                            continue;
+                        }
+
                         // Download the document
                         const downloadResult = await downloadDocumentById(
                             docId,
                             window.location.href,
                             docMeta,
-                            projectId
+                            projectId,
+                            { saveToDisk: false }
                         );
 
                         if (downloadResult?.ok) {
                             const uploadResult = await uploadFileToBackend(
                                 message.authToken,
                                 null,
-                                docMeta?.fileName || `document-${docId}.pdf`,
+                                expectedFileName,
                                 message.demandNoteId,
-                                'traffic',
+                                'medical',
                                 downloadResult.downloadUrl,
                                 apiOrigin
                             );
 
                             if (uploadResult?.success) {
                                 uploadedFiles.push(uploadResult.file);
+                                uploadedNameSet.add(normalizedExpectedName);
                                 succeeded++;
                             } else {
                                 failed++;
@@ -509,6 +529,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                     ok: succeeded > 0,
                     succeeded,
                     failed,
+                    skipped,
                     uploadedFiles
                 });
 
@@ -1028,12 +1049,13 @@ function extractDocumentIdFromDetails(payload, fallbackId) {
     return walk(payload) || String(fallbackId || '');
 }
 
-async function downloadDocumentById(documentId, pageUrl, documentMeta = null, projectId = '') {
+async function downloadDocumentById(documentId, pageUrl, documentMeta = null, projectId = '', options = {}) {
     if (!documentId) {
         return { ok: false, error: 'Missing document ID' };
     }
 
     const origin = getOriginFromPageUrl(pageUrl);
+    const shouldSaveDownload = options?.saveToDisk !== false;
 
     const existsUrl = `https://app.vinesign.com/integration/ExistsForFilevineDocumentIds?documentIds=${encodeURIComponent(documentId)}`;
     let existsResponse = null;
@@ -1117,11 +1139,13 @@ async function downloadDocumentById(documentId, pageUrl, documentMeta = null, pr
             }
 
             finalFileUrl = bestUrl;
-            chrome.runtime.sendMessage({
-                type: 'DOWNLOAD_FILE',
-                url: finalFileUrl,
-                filename: targetPath
-            });
+            if (shouldSaveDownload) {
+                chrome.runtime.sendMessage({
+                    type: 'DOWNLOAD_FILE',
+                    url: finalFileUrl,
+                    filename: targetPath
+                });
+            }
         } else {
             const blob = await downloadRes.blob();
             const fileNameFromHeader =
@@ -1131,11 +1155,13 @@ async function downloadDocumentById(documentId, pageUrl, documentMeta = null, pr
             const dataUrl = await blobToDataUrl(blob);
             // Reuse data URL for upload fallback when direct file URL is not available.
             finalFileUrl = dataUrl;
-            chrome.runtime.sendMessage({
-                type: 'DOWNLOAD_FILE',
-                url: dataUrl,
-                filename: blobPath
-            });
+            if (shouldSaveDownload) {
+                chrome.runtime.sendMessage({
+                    type: 'DOWNLOAD_FILE',
+                    url: dataUrl,
+                    filename: blobPath
+                });
+            }
         }
 
         return {
@@ -1206,6 +1232,43 @@ async function getFileContentForUpload(downloadUrl, documentMeta, apiOrigin) {
     } catch (error) {
         console.error('Error getting file content for upload:', error);
         return null;
+    }
+}
+
+function normalizeFileNameForMatch(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
+}
+
+async function getDemandNoteFilesFromBackend(authToken, demandNoteId) {
+    try {
+        const result = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({
+                type: 'GET_DEMAND_NOTE_FILES',
+                authToken,
+                demandNoteId
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    resolve({
+                        success: false,
+                        error: chrome.runtime.lastError.message,
+                        files: []
+                    });
+                    return;
+                }
+                resolve(response || { success: false, files: [] });
+            });
+        });
+
+        if (!result?.success) {
+            return { success: false, files: [] };
+        }
+
+        return { success: true, files: Array.isArray(result.files) ? result.files : [] };
+    } catch (error) {
+        return { success: false, files: [] };
     }
 }
 

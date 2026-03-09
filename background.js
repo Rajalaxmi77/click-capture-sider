@@ -229,6 +229,49 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                 }
             })();
             break;
+
+        case 'GET_DEMAND_NOTE_FILES':
+            (async () => {
+                try {
+                    const { authToken, demandNoteId } = message || {};
+                    if (!authToken) {
+                        sendResponse({ success: false, error: 'Missing auth token' });
+                        return;
+                    }
+                    if (!demandNoteId) {
+                        sendResponse({ success: false, error: 'Missing demand note ID' });
+                        return;
+                    }
+
+                    const response = await fetch(`http://localhost:3000/api/demand-notes/${encodeURIComponent(String(demandNoteId))}/files`, {
+                        method: 'GET',
+                        headers: {
+                            Authorization: `Bearer ${authToken}`
+                        }
+                    });
+
+                    if (!response.ok) {
+                        const errorText = await response.text().catch(() => '');
+                        sendResponse({
+                            success: false,
+                            error: errorText || `Failed to fetch demand note files (${response.status})`
+                        });
+                        return;
+                    }
+
+                    const payload = await response.json().catch(() => ({}));
+                    sendResponse({
+                        success: true,
+                        files: Array.isArray(payload?.files) ? payload.files : []
+                    });
+                } catch (error) {
+                    sendResponse({
+                        success: false,
+                        error: error?.message || 'Failed to fetch demand note files'
+                    });
+                }
+            })();
+            break;
     }
 
     return true;

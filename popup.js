@@ -416,6 +416,29 @@ function buildDownloadFailedAlert(errorMessage) {
   return `Download failed.\nPlease make sure you are on the Filevine page and still logged in.\n\nError details: ${detail}`;
 }
 
+function ensureContentScript(tabId) {
+  return new Promise((resolve) => {
+    if (!chrome.scripting || !tabId) {
+      resolve(false);
+      return;
+    }
+
+    chrome.scripting.executeScript(
+      {
+        target: { tabId, allFrames: true },
+        files: ['content.js']
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          resolve(false);
+          return;
+        }
+        resolve(true);
+      }
+    );
+  });
+}
+
 function handleDownloadStatusMessage(message) {
   if (message.context === 'sync_upload') {
     const total = Number(message.total || 0);
@@ -503,11 +526,13 @@ function downloadByDocumentId(documentId, pageUrl) {
     return;
   }
 
-  chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+  chrome.tabs.query({ active: true, currentWindow: true }, async function(tabs) {
     if (!tabs || !tabs[0]) {
       alert('No active tab found.');
       return;
     }
+
+    await ensureContentScript(tabs[0].id);
 
     chrome.tabs.sendMessage(
       tabs[0].id,
@@ -541,9 +566,15 @@ function downloadByDocumentId(documentId, pageUrl) {
 async function downloadAllFiles() {
   setDownloadStatus('Download in progress: preparing files...', 'info');
   
-  chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+  chrome.tabs.query({active: true, currentWindow: true}, async function(tabs) {
     if (!tabs || !tabs[0]) {
       setDownloadStatus('No active tab found', 'error');
+      return;
+    }
+
+    const injected = await ensureContentScript(tabs[0].id);
+    if (!injected) {
+      setDownloadStatus('Unable to initialize Filevine helper. Please refresh the page and try again.', 'error');
       return;
     }
     
@@ -635,6 +666,13 @@ async function syncFilesForDemandNote(demandNoteId) {
 
     if (!syncTab || !syncTab.id) {
       setDetailSyncStatus('Open a Filevine project tab, then click Sync Now', 'error');
+      setDetailSyncing(false);
+      return;
+    }
+
+    const injected = await ensureContentScript(syncTab.id);
+    if (!injected) {
+      setDetailSyncStatus('Unable to initialize Filevine helper. Please refresh the page and try again.', 'error');
       setDetailSyncing(false);
       return;
     }

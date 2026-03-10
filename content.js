@@ -391,7 +391,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
             return true;
         }
 
-        const projectId = getProjectIdFromUrl(window.location.href);
+        const projectId = String(getProjectIdFromUrl(window.location.href) || '').trim();
         if (!projectId) {
             sendResponse({
                 ok: false,
@@ -399,6 +399,10 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
             });
             return true;
         }
+
+        const applicationType =
+            getApplicationTypeFromUrl(window.location.href) ||
+            (projectId ? 'filevine' : '');
 
         if (!message.authToken) {
             sendResponse({
@@ -504,7 +508,11 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                                 message.demandNoteId,
                                 'medical',
                                 downloadResult.downloadUrl,
-                                apiOrigin
+                                apiOrigin,
+                                {
+                                    projectId,
+                                    applicationType
+                                }
                             );
 
                             if (uploadResult?.success) {
@@ -610,6 +618,21 @@ function getProjectIdFromUrl(pageUrl) {
     } catch (error) {
         return '';
     }
+}
+
+function getApplicationTypeFromUrl(pageUrl) {
+    const source = pageUrl || window.location.href;
+    let host = '';
+    try {
+        host = new URL(source, window.location.href).hostname || '';
+    } catch (error) {
+        host = '';
+    }
+
+    const normalized = `${host} ${source}`.toLowerCase();
+    if (normalized.includes('filevine')) return 'filevine';
+    if (normalized.includes('vinesign')) return 'vinesign';
+    return '';
 }
 
 function buildProjectDocsMenuUrl(projectId, pageUrl) {
@@ -1273,8 +1296,10 @@ async function getDemandNoteFilesFromBackend(authToken, demandNoteId) {
 }
 
 // Helper function to upload file to backend API
-async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, fileCategory, fileUrl = '', apiOrigin = '') {
+async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, fileCategory, fileUrl = '', apiOrigin = '', options = {}) {
     try {
+        const projectId = String(options?.projectId || '').trim();
+        const applicationType = String(options?.applicationType || '').trim();
         const result = await new Promise((resolve) => {
             chrome.runtime.sendMessage({
                 type: 'UPLOAD_FILE_TO_BACKEND',
@@ -1284,7 +1309,9 @@ async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, file
                 demandNoteId,
                 fileCategory: fileCategory || 'Document',
                 fileUrl,
-                apiOrigin
+                apiOrigin,
+                projectId,
+                applicationType
             }, (response) => {
                 if (chrome.runtime.lastError) {
                     resolve({

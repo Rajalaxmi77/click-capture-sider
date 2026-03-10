@@ -1,5 +1,7 @@
 console.log('Background script loaded');
 
+const API_URL = 'http://localhost:3000';
+
 // Store all captured clicks
 let allClicks = [];
 let isCapturing = true;
@@ -155,7 +157,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         case 'UPLOAD_FILE_TO_BACKEND':
             (async () => {
                 try {
-                    const { authToken, blob, fileName, demandNoteId, fileCategory, fileUrl, apiOrigin } = message || {};
+                    const { authToken, blob, fileName, demandNoteId, fileCategory, fileUrl, apiOrigin, projectId, applicationType } = message || {};
 
                     if (!authToken) {
                         sendResponse({ success: false, error: 'Missing auth token' });
@@ -198,8 +200,14 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                     formData.append('file', fileBlob, fileName || 'document.pdf');
                     formData.append('demandNoteId', String(demandNoteId));
                     formData.append('fileCategory', fileCategory || 'Document');
+                    if (projectId) {
+                        formData.append('projectId', String(projectId));
+                    }
+                    if (applicationType) {
+                        formData.append('applicationType', String(applicationType));
+                    }
 
-                    const response = await fetch('http://localhost:3000/api/upload', {
+                    const response = await fetch(`${API_URL}/api/upload`, {
                         method: 'POST',
                         headers: {
                             Authorization: `Bearer ${authToken}`
@@ -243,7 +251,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                         return;
                     }
 
-                    const response = await fetch(`http://localhost:3000/api/demand-notes/${encodeURIComponent(String(demandNoteId))}/files`, {
+                    const response = await fetch(`${API_URL}/api/demand-notes/${encodeURIComponent(String(demandNoteId))}/files`, {
                         method: 'GET',
                         headers: {
                             Authorization: `Bearer ${authToken}`

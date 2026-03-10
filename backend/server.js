@@ -451,7 +451,7 @@ app.get('/api/health', (req, res) => {
 // Upload a file and associate it with a demand note
 app.post('/api/upload', authenticateRequest, upload.single('file'), async (req, res) => {
   try {
-    const { demandNoteId, fileCategory } = req.body;
+    const { demandNoteId, fileCategory, projectId, applicationType } = req.body;
     
     if (!req.file) {
       return res.status(400).json({ error: 'No file provided' });
@@ -476,6 +476,19 @@ app.post('/api/upload', authenticateRequest, upload.single('file'), async (req, 
         fs.unlinkSync(req.file.path);
       }
       return res.status(404).json({ error: 'Demand note not found' });
+    }
+
+    const nextProjectId = String(projectId || '').trim() || null;
+    const nextApplicationType = String(applicationType || '').trim() || null;
+    if (nextProjectId || nextApplicationType) {
+      await prisma.$executeRaw`
+        UPDATE "DemandNote"
+        SET
+          "projectId" = COALESCE(${nextProjectId}, "projectId"),
+          "applicationType" = COALESCE(${nextApplicationType}, "applicationType"),
+          "updatedAt" = ${new Date()}
+        WHERE id = ${demandNoteId}
+      `;
     }
     
     // Determine file type from original filename

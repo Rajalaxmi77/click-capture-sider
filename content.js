@@ -531,7 +531,8 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                                 apiOrigin,
                                 {
                                     projectId,
-                                    applicationType
+                                    applicationType,
+                                    sourceDocumentId: docId
                                 }
                             );
 
@@ -1364,6 +1365,7 @@ async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, file
     try {
         const projectId = String(options?.projectId || '').trim();
         const applicationType = String(options?.applicationType || '').trim();
+        const sourceDocumentId = String(options?.sourceDocumentId || '').trim();
         const result = await new Promise((resolve) => {
             chrome.runtime.sendMessage({
                 type: 'UPLOAD_FILE_TO_BACKEND',
@@ -1375,7 +1377,8 @@ async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, file
                 fileUrl,
                 apiOrigin,
                 projectId,
-                applicationType
+                applicationType,
+                sourceDocumentId
             }, (response) => {
                 if (chrome.runtime.lastError) {
                     resolve({

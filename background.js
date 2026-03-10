@@ -157,7 +157,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         case 'UPLOAD_FILE_TO_BACKEND':
             (async () => {
                 try {
-                    const { authToken, blob, fileName, demandNoteId, fileCategory, fileUrl, apiOrigin, projectId, applicationType } = message || {};
+                    const { authToken, blob, fileName, demandNoteId, fileCategory, fileUrl, apiOrigin, projectId, applicationType, sourceDocumentId } = message || {};
 
                     if (!authToken) {
                         sendResponse({ success: false, error: 'Missing auth token' });
@@ -205,6 +205,9 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                     }
                     if (applicationType) {
                         formData.append('applicationType', String(applicationType));
+                    }
+                    if (sourceDocumentId) {
+                        formData.append('sourceDocumentId', String(sourceDocumentId));
                     }
 
                     const response = await fetch(`${API_URL}/api/upload`, {

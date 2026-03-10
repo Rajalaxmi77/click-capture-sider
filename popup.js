@@ -417,6 +417,47 @@ function buildDownloadFailedAlert(errorMessage) {
 }
 
 function handleDownloadStatusMessage(message) {
+  if (message.context === 'sync_upload') {
+    const total = Number(message.total || 0);
+    const completed = Number(message.completed || 0);
+    const succeeded = Number(message.succeeded || 0);
+    const failed = Number(message.failed || 0);
+    const skipped = Number(message.skipped || 0);
+
+    if (message.stage === 'upload_started') {
+      setDetailSyncStatus(`Uploading in progress: 0/${total} files`, 'info');
+      return;
+    }
+
+    if (message.stage === 'upload_in_progress') {
+      setDetailSyncStatus(
+        `Uploading in progress: ${completed}/${total} files (Success: ${succeeded}, Failed: ${failed}, Skipped: ${skipped})`,
+        failed > 0 ? 'error' : 'info'
+      );
+      return;
+    }
+
+    if (message.stage === 'upload_completed') {
+      if (failed === 0 && succeeded > 0) {
+        setDetailSyncStatus(
+          `Uploaded successfully: ${succeeded}/${total} files${skipped ? ` (${skipped} skipped)` : ''}.`,
+          'success'
+        );
+      } else if (total === 0) {
+        setDetailSyncStatus('No files found to upload.', 'info');
+      } else {
+        setDetailSyncStatus(
+          `Upload completed with errors. Uploaded ${succeeded}/${total} files${skipped ? ` (${skipped} skipped)` : ''}.`,
+          'error'
+        );
+      }
+      setTimeout(() => {
+        hideDetailSyncStatus();
+      }, 5000);
+      return;
+    }
+  }
+
   const total = Number(message.total || 0);
   const completed = Number(message.completed || 0);
   const succeeded = Number(message.succeeded || 0);
@@ -438,7 +479,7 @@ function handleDownloadStatusMessage(message) {
   if (message.stage === 'completed') {
     if (failed === 0 && total > 0) {
       setDownloadStatus(
-        `All files downloaded successfully. Saved inside individual folders.`,
+        `All files downloaded successfully: ${succeeded}/${total} files.`,
         'success'
       );
     } else if (total === 0) {
@@ -624,13 +665,10 @@ async function syncFilesForDemandNote(demandNoteId) {
       // If there's a specific error message, show it
       if (downloadResult?.error) {
         setDetailSyncStatus(`Download failed: ${downloadResult.error}`, 'error');
-      } else if (downloadResult?.skipped) {
-        // Handle skipped case (e.g., ignored_in_non_top_frame)
-        setDetailSyncStatus('Download skipped. Please try from the main tab.', 'info');
-      } else {
-        // Provide more helpful message instead of "Unknown error"
-        setDetailSyncStatus('Download failed. Please refresh the page and try again.', 'error');
-      }
+    } else {
+      // Provide more helpful message instead of "Unknown error"
+      setDetailSyncStatus('Download failed. Please refresh the page and try again.', 'error');
+    }
       setDetailSyncing(false);
       return;
     }

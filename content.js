@@ -383,12 +383,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         console.log('=== SYNC_MEDICAL_RECORDS received, demandNoteId:', message.demandNoteId);
         
         if (window.top !== window) {
-            sendResponse({
-                ok: false,
-                skipped: true,
-                reason: 'ignored_in_non_top_frame'
-            });
-            return true;
+            return;
         }
 
         const projectId = String(getProjectIdFromUrl(window.location.href) || '').trim();
@@ -466,6 +461,20 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                 let succeeded = 0;
                 let failed = 0;
                 let skipped = 0;
+                let uploadCompleted = 0;
+                let uploadSucceeded = 0;
+                let uploadFailed = 0;
+                let uploadSkipped = 0;
+
+                emitDownloadStatus({
+                    context: 'sync_upload',
+                    stage: 'upload_started',
+                    total: medicalRecordsIds.length,
+                    completed: 0,
+                    succeeded: 0,
+                    failed: 0,
+                    skipped: 0
+                });
 
                 for (let i = 0; i < medicalRecordsIds.length; i++) {
                     const docId = medicalRecordsIds[i];
@@ -488,6 +497,17 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                         // If already uploaded in DemandFile, skip both download and upload.
                         if (normalizedExpectedName && uploadedNameSet.has(normalizedExpectedName)) {
                             skipped++;
+                            uploadSkipped++;
+                            uploadCompleted++;
+                            emitDownloadStatus({
+                                context: 'sync_upload',
+                                stage: 'upload_in_progress',
+                                total: medicalRecordsIds.length,
+                                completed: uploadCompleted,
+                                succeeded: uploadSucceeded,
+                                failed: uploadFailed,
+                                skipped: uploadSkipped
+                            });
                             continue;
                         }
 
@@ -519,17 +539,61 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                                 uploadedFiles.push(uploadResult.file);
                                 uploadedNameSet.add(normalizedExpectedName);
                                 succeeded++;
+                                uploadSucceeded++;
                             } else {
                                 failed++;
+                                uploadFailed++;
                             }
+                            uploadCompleted++;
+                            emitDownloadStatus({
+                                context: 'sync_upload',
+                                stage: 'upload_in_progress',
+                                total: medicalRecordsIds.length,
+                                completed: uploadCompleted,
+                                succeeded: uploadSucceeded,
+                                failed: uploadFailed,
+                                skipped: uploadSkipped
+                            });
                         } else {
                             failed++;
+                            uploadFailed++;
+                            uploadCompleted++;
+                            emitDownloadStatus({
+                                context: 'sync_upload',
+                                stage: 'upload_in_progress',
+                                total: medicalRecordsIds.length,
+                                completed: uploadCompleted,
+                                succeeded: uploadSucceeded,
+                                failed: uploadFailed,
+                                skipped: uploadSkipped
+                            });
                         }
                     } catch (err) {
                         console.error('Error syncing document:', docId, err);
                         failed++;
+                        uploadFailed++;
+                        uploadCompleted++;
+                        emitDownloadStatus({
+                            context: 'sync_upload',
+                            stage: 'upload_in_progress',
+                            total: medicalRecordsIds.length,
+                            completed: uploadCompleted,
+                            succeeded: uploadSucceeded,
+                            failed: uploadFailed,
+                            skipped: uploadSkipped
+                        });
                     }
                 }
+
+                emitDownloadStatus({
+                    context: 'sync_upload',
+                    stage: 'upload_completed',
+                    total: medicalRecordsIds.length,
+                    completed: uploadCompleted,
+                    succeeded: uploadSucceeded,
+                    failed: uploadFailed,
+                    skipped: uploadSkipped
+                });
 
                 console.log(`Sync completed: ${succeeded} succeeded, ${failed} failed`);
 

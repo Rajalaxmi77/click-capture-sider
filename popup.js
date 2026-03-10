@@ -619,16 +619,38 @@ async function syncFilesForDemandNote(demandNoteId) {
       );
     });
 
+    // Handle case where no response received or error occurred
     if (!downloadResult || downloadResult.ok === false) {
-      setDetailSyncStatus(`Download failed: ${downloadResult?.error || 'Unknown error'}`, 'error');
+      // If there's a specific error message, show it
+      if (downloadResult?.error) {
+        setDetailSyncStatus(`Download failed: ${downloadResult.error}`, 'error');
+      } else if (downloadResult?.skipped) {
+        // Handle skipped case (e.g., ignored_in_non_top_frame)
+        setDetailSyncStatus('Download skipped. Please try from the main tab.', 'info');
+      } else {
+        // Provide more helpful message instead of "Unknown error"
+        setDetailSyncStatus('Download failed. Please refresh the page and try again.', 'error');
+      }
       setDetailSyncing(false);
       return;
     }
 
     const totalDownloaded = downloadResult.succeeded || 0;
+    const totalSkipped = downloadResult.skipped || 0;
+
+    // If no files were downloaded but we got a valid response, check if files were already synced
+    if (totalDownloaded === 0 && totalSkipped > 0) {
+      setDetailSyncStatus(`All Medical Provider Records already synced (${totalSkipped} files skipped)`, 'success');
+      setDetailSyncing(false);
+      await openDemandNoteDetail(demandNoteId);
+      setTimeout(() => {
+        hideDetailSyncStatus();
+      }, 5000);
+      return;
+    }
 
     if (totalDownloaded === 0) {
-      setDetailSyncStatus('No Medical Provider Records found to sync', 'error');
+      setDetailSyncStatus('No Medical Provider Records found to sync', 'info');
       setDetailSyncing(false);
       return;
     }
@@ -673,6 +695,16 @@ function setupEventListeners() {
     logoutBtn.addEventListener('click', async () => {
       await chrome.storage.local.remove(['authToken', 'user', 'isAuthenticated', 'authExpiry', 'capturedClicks']);
       window.location.href = 'login.html';
+    });
+  }
+
+  // Refresh button - reload demand notes data
+  const refreshBtn = document.getElementById('refreshBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.classList.add('refreshing');
+      await fetchDemandNotes(true);
+      refreshBtn.classList.remove('refreshing');
     });
   }
 

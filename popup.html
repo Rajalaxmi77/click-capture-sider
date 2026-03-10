@@ -86,6 +86,32 @@
             color: white;
         }
 
+        .refresh-btn {
+            background: transparent;
+            border: 1px solid #475569;
+            color: #94a3b8;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: #3b82f6;
+            border-color: #3b82f6;
+            color: white;
+        }
+
+        .refresh-btn.refreshing {
+            pointer-events: none;
+            opacity: 0.7;
+        }
+
+        .refresh-btn.refreshing i {
+            animation: spin 1s linear infinite;
+        }
+
         /* Navigation Tabs */
         .nav-tabs {
             display: flex;
@@ -557,6 +583,9 @@
                     <div class="user-name" id="userName">Loading...</div>
                     <div class="user-role" id="userRole">Loading...</div>
                 </div>
+                <button class="refresh-btn" id="refreshBtn" title="Refresh Data">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
                 <button class="logout-btn" id="logoutBtn" title="Logout">
                     <i class="fas fa-sign-out-alt"></i>
                 </button>

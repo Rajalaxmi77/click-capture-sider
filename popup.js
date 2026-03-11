@@ -835,6 +835,7 @@ const backBtn = document.getElementById('backToDemandNotes');
       console.log('=== Sync Now button clicked ===');
       console.log('currentDemandNoteId:', state.currentDemandNoteId);
       console.log('authToken exists:', !!state.authToken);
+      //Checks if a demand note is currently selected 
       
       if (state.currentDemandNoteId) {
         syncFilesForDemandNote(state.currentDemandNoteId);

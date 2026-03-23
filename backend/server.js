@@ -1,17 +1,17 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken'); // JWT token creation/verification
 const cors = require('cors');
-const multer = require('multer');
+const multer = require('multer'); // File upload handling
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { PrismaClient } = require('@prisma/client');
-require('dotenv').config();
+const { PrismaClient } = require('@prisma/client'); // Database ORM
+require('dotenv').config();      // Load environment variables from .env file (make sure to create this file with JWT_SECRET or NEXTAUTH_SECRET)
 
 const app = express();
 const port = process.env.PORT || 3001;
-const prisma = new PrismaClient();
+const prisma = new PrismaClient(); // Initialize Prisma database client
 
 // Configure multer for file uploads
 const uploadsDir = path.join(__dirname, 'uploads');

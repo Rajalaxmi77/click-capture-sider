@@ -122,5 +122,57 @@ const response = await fetch(`${API_URL}/api/demand-notes?full=true`, {
 
 - Login is performed by the UI, which stores the JWT token and uses it for subsequent requests.
 
+## How a Demand Note Is Selected (Click Event)
+
+When the user clicks a demand note card in the list, the UI reads the `data-note-id` attribute and opens the detail view for that note.
+
+Code (popup.js):
+
+```js
+const listEl = document.getElementById('demandNotesList');
+if (listEl) {
+  listEl.addEventListener('click', (event) => {
+    const card = event.target.closest('.demand-note-card');
+    if (!card) return;
+    const noteId = card.getAttribute('data-note-id');
+    if (noteId) void openDemandNoteDetail(noteId);
+  });
+}
+```
+
+The note id comes from the card markup rendered in `renderDemandNotes()`:
+
+```js
+<div class="demand-note-card" data-note-id="${escapeHtml(note.id)}">
+```
+
+## How Demand Note Details Are Fetched
+
+When `openDemandNoteDetail(noteId)` runs, it:
+1) stores the selected id in state,  
+2) calls `fetchDemandNoteDetail(noteId)` to query the backend, and  
+3) renders the returned note + documents.
+
+Code (popup.js):
+
+```js
+async function fetchDemandNoteDetail(noteId) {
+  const response = await fetch(`${API_URL}/api/demand-notes/${encodeURIComponent(noteId)}`, {
+    headers: { Authorization: `Bearer ${state.authToken}` }
+  });
+  return response.json();
+}
+
+async function openDemandNoteDetail(noteId) {
+  state.currentDemandNoteId = noteId;
+  setActiveView('detail');
+
+  const data = await fetchDemandNoteDetail(noteId);
+  const note = data?.note;
+  const documents = Array.isArray(data?.documents) ? data.documents : [];
+  // ...render detail view...
+}
+```
+
 ---
 If you want this summary updated for additional endpoints or new fields, tell me which ones to add.

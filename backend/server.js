@@ -105,6 +105,7 @@ app.get('/api/test', (req, res) => {
   });
 });
 
+// get demand list from demand note table 
 // Demand notes list endpoint (compatible with /api/demand-notes?full=true)
 app.get('/api/demand-notes', authenticateRequest, async (req, res) => {
   try {

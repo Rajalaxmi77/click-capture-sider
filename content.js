@@ -399,14 +399,6 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
             getApplicationTypeFromUrl(window.location.href) ||
             (projectId ? 'filevine' : '');
 
-        if (!message.authToken) {
-            sendResponse({
-                ok: false,
-                error: 'Authentication token required for upload'
-            });
-            return true;
-        }
-
         const apiOrigin = getOriginFromPageUrl(window.location.href);
         
         (async () => {
@@ -449,7 +441,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
                 console.log(`Found ${medicalRecordsIds.length} Medical Provider Records to sync`);
 
                 // Step 2.5: Fetch already uploaded files for this demand note and skip duplicates
-                const existingFilesResult = await getDemandNoteFilesFromBackend(message.authToken, message.demandNoteId);
+                const existingFilesResult = await getDemandNoteFilesFromBackend(message.demandNoteId);
                 const uploadedNameSet = new Set(
                     (existingFilesResult?.files || [])
                         .map((f) => normalizeFileNameForMatch(f?.fileName))
@@ -522,7 +514,6 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
 
                         if (downloadResult?.ok) {
                             const uploadResult = await uploadFileToBackend(
-                                message.authToken,
                                 null,
                                 expectedFileName,
                                 message.demandNoteId,
@@ -1330,12 +1321,11 @@ function normalizeFileNameForMatch(value) {
         .replace(/\s+/g, ' ');
 }
 
-async function getDemandNoteFilesFromBackend(authToken, demandNoteId) {
+async function getDemandNoteFilesFromBackend(demandNoteId) {
     try {
         const result = await new Promise((resolve) => {
             chrome.runtime.sendMessage({
                 type: 'GET_DEMAND_NOTE_FILES',
-                authToken,
                 demandNoteId
             }, (response) => {
                 if (chrome.runtime.lastError) {
@@ -1361,7 +1351,7 @@ async function getDemandNoteFilesFromBackend(authToken, demandNoteId) {
 }
 
 // Helper function to upload file to backend API
-async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, fileCategory, fileUrl = '', apiOrigin = '', options = {}) {
+async function uploadFileToBackend(blob, fileName, demandNoteId, fileCategory, fileUrl = '', apiOrigin = '', options = {}) {
     try {
         const projectId = String(options?.projectId || '').trim();
         const applicationType = String(options?.applicationType || '').trim();
@@ -1369,7 +1359,6 @@ async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, file
         const result = await new Promise((resolve) => {
             chrome.runtime.sendMessage({
                 type: 'UPLOAD_FILE_TO_BACKEND',
-                authToken,
                 blob,
                 fileName,
                 demandNoteId,

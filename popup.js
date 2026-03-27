@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3001';
+const API_URL = 'http://localhost:3000';
 
 const state = {
   authToken: '',
@@ -7,11 +7,75 @@ const state = {
   activeFilter: 'all',
   searchText: '',
   loading: false,
-  capturedClicks: [], // Add this for download functionality
-  isCapturing: true,  // Add this for download functionality
-  currentFilter: 'all', // Add this for download functionality
-  currentDemandNoteId: null // Track current demand note for sync
+  capturedClicks: [],
+  isCapturing: true,
+  currentFilter: 'all',
+  currentDemandNoteId: null
 };
+
+async function getSession() {
+  try {
+    const response = await fetch(`${API_URL}/api/auth/session`, {
+      method: 'GET',
+      credentials: 'include'
+    });
+    if (!response.ok) return null;
+    const data = await response.json().catch(() => null);
+    if (!data || !data.user) return null;
+    return data;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function signOutSession() {
+  try {
+    const csrfRes = await fetch(`${API_URL}/api/auth/csrf`, {
+      method: 'GET',
+      credentials: 'include'
+    });
+    const csrfData = await csrfRes.json().catch(() => null);
+    const csrfToken = csrfData?.csrfToken;
+    if (!csrfToken) return;
+
+    await fetch(`${API_URL}/api/auth/signout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({ csrfToken })
+    });
+  } catch (error) {
+    // Best-effort signout.
+  }
+}
+
+async function getDemandNotes(full = true) {
+  const response = await fetch(`${API_URL}/api/demand-notes?full=${full ? 'true' : 'false'}`, {
+    credentials: 'include'
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to load demand notes');
+  }
+
+  return response.json();
+}
+
+async function getDemandNoteDetail(noteId) {
+  const response = await fetch(`${API_URL}/api/demand-notes/${encodeURIComponent(noteId)}`, {
+    credentials: 'include'
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to load demand note detail');
+  }
+
+  return response.json();
+}
 
 function escapeHtml(value) {
   return String(value || '')
@@ -66,7 +130,7 @@ function hideSyncStatus() {
 }
 
 function setSyncing(isSyncing) {
-  const syncBtn = document.getElementById('downloadAllBtn'); // Changed from syncNowBtn to downloadAllBtn
+  const syncBtn = document.getElementById('downloadAllBtn');
   const syncIcon = document.getElementById('syncIcon');
   if (!syncBtn || !syncIcon) return;
 
@@ -107,7 +171,7 @@ function setDetailSyncing(isSyncing) {
 function setDownloadStatus(message, tone = 'info') {
   const downloadStatus = document.getElementById('downloadStatus');
   if (!downloadStatus) return;
-  
+
   downloadStatus.classList.remove('hidden', 'success', 'error');
   if (tone === 'success') downloadStatus.classList.add('success');
   if (tone === 'error') downloadStatus.classList.add('error');
@@ -131,7 +195,7 @@ function setActiveView(viewName) {
     'demand-notes': 'demandNotesView',
     documents: 'documentsView',
     intake: 'intakeView',
-    detail: 'demandNoteDetailView',
+    detail: 'demandNoteDetailView'
   };
 
   document.querySelectorAll('.view-container').forEach((view) => view.classList.remove('active'));
@@ -194,31 +258,6 @@ function renderDemandNotes() {
   }).join('');
 }
 
-function renderDemandNoteDetail(noteId) {
-  const detailEl = document.getElementById('demandNoteDetail');
-  if (!detailEl) return;
-
-  const note = state.demandNotes.find((n) => n.id === noteId);
-  if (!note) return;
-
-  detailEl.innerHTML = `
-    <div class="detail-view">
-      <h3 style="margin-bottom: 12px; color:#1e293b;">${escapeHtml(note.title || 'Untitled Demand Note')}</h3>
-      <div style="display:grid; gap:10px; font-size:13px; color:#475569;">
-        <div><strong>Status:</strong> ${escapeHtml(note.status || '-')}</div>
-        <div><strong>Client:</strong> ${escapeHtml(note.clientName || '-')}</div>
-        <div><strong>Total Amount:</strong> ${formatAmount(note.totalAmount)}</div>
-        <div><strong>Reference:</strong> ${escapeHtml(note.referenceNumber || '-')}</div>
-        <div><strong>Due Date:</strong> ${formatDate(note.dueDate)}</div>
-        <div><strong>Updated:</strong> ${formatDate(note.updatedAt)}</div>
-        <div><strong>Description:</strong><br>${escapeHtml(note.description || '-')}</div>
-      </div>
-    </div>
-  `;
-
-  setActiveView('detail');
-}
-
 function renderDocumentsSection(documents) {
   if (!Array.isArray(documents) || documents.length === 0) {
     return `
@@ -255,104 +294,25 @@ function renderDocumentsSection(documents) {
   `;
 }
 
-async function fetchDemandNoteDetail(noteId) {
-  const response = await fetch(`${API_URL}/api/demand-notes/${encodeURIComponent(noteId)}`, {
-    headers: {
-      Authorization: `Bearer ${state.authToken}`,
-    },
-  });
+function populateUser(user) {
+  const nameEl = document.getElementById('userName');
+  const roleEl = document.getElementById('userRole');
+  const avatarEl = document.getElementById('userAvatar');
 
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to load demand note detail');
+  if (nameEl) {
+    const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
+    nameEl.textContent = fullName || user?.email || 'User';
   }
 
-  return response.json();
-}
-
-async function openDemandNoteDetail(noteId) {
-  // Store the current demand note ID for sync
-  state.currentDemandNoteId = noteId;
-  
-  const detailEl = document.getElementById('demandNoteDetail');
-  if (detailEl) {
-    detailEl.innerHTML = `
-      <div class="detail-view">
-        <div style="font-size:13px; color:#64748b;">Loading details...</div>
-      </div>
-    `;
+  if (roleEl) {
+    const roleText = Array.isArray(user?.roles) && user.roles.length > 0 ? user.roles.join(', ') : 'Authenticated User';
+    roleEl.textContent = roleText;
   }
-  setActiveView('detail');
 
-  try {
-    const data = await fetchDemandNoteDetail(noteId);
-    const note = data?.note;
-    const documents = Array.isArray(data?.documents) ? data.documents : [];
-    if (!note) {
-      throw new Error('Demand note not found');
-    }
-
-    detailEl.innerHTML = `
-      <div class="detail-view">
-        <h3 style="margin-bottom: 12px; color:#1e293b;">${escapeHtml(note.title || 'Untitled Demand Note')}</h3>
-        <div style="display:grid; gap:10px; font-size:13px; color:#475569;">
-          <div><strong>Status:</strong> ${escapeHtml(note.status || '-')}</div>
-          <div><strong>Client:</strong> ${escapeHtml(note.clientName || '-')}</div>
-          <div><strong>Total Amount:</strong> ${formatAmount(note.totalAmount)}</div>
-          <div><strong>Reference:</strong> ${escapeHtml(note.referenceNumber || '-')}</div>
-          <div><strong>Due Date:</strong> ${formatDate(note.dueDate)}</div>
-          <div><strong>Updated:</strong> ${formatDate(note.updatedAt)}</div>
-          <div><strong>Description:</strong><br>${escapeHtml(note.description || '-')}</div>
-        </div>
-        ${renderDocumentsSection(documents)}
-      </div>
-    `;
-  } catch (error) {
-    console.error('Error loading demand note detail:', error);
-    detailEl.innerHTML = `
-      <div class="detail-view">
-        <div style="font-size:13px; color:#b91c1c;">${escapeHtml(error.message || 'Failed to load detail')}</div>
-      </div>
-    `;
+  if (avatarEl) {
+    avatarEl.textContent = getInitials(user);
   }
 }
-
-async function fetchDemandNotes(full = true) {
-  if (!state.authToken) return;
-
-  state.loading = true;
-  setSyncing(true);
-  setSyncStatus('Loading demand notes...');
-
-  try {
-    const response = await fetch(`${API_URL}/api/demand-notes?full=${full ? 'true' : 'false'}`, {
-      headers: {
-        Authorization: `Bearer ${state.authToken}`,
-      },
-    });
-
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || 'Failed to load demand notes');
-    }
-
-    const data = await response.json();
-    state.demandNotes = Array.isArray(data.notes) ? data.notes : [];
-    renderDemandNotes();
-    setSyncStatus(`Loaded ${state.demandNotes.length} demand notes`, 'success');
-    setTimeout(() => hideSyncStatus(), 1200);
-  } catch (error) {
-    console.error('Error loading demand notes:', error);
-    setSyncStatus(error.message || 'Failed to load demand notes', 'error');
-  } finally {
-    state.loading = false;
-    setSyncing(false);
-  }
-}
-
-// ============================================
-// DOWNLOAD FUNCTIONALITY (from old popup.js)
-// ============================================
 
 function loadClicks() {
   chrome.storage.local.get(['capturedClicks'], function(result) {
@@ -371,7 +331,7 @@ function saveClicks() {
 
 function addClick(clickData) {
   if (!state.isCapturing) return;
-  
+
   const newClick = {
     type: clickData.type,
     text: clickData.text || 'No text',
@@ -388,26 +348,25 @@ function addClick(clickData) {
     value: clickData.value || '',
     role: clickData.role || '',
     'aria-label': clickData['aria-label'] || '',
-    
+
     position: clickData.position || null,
     parent: clickData.parent || null,
     childrenCount: clickData.childrenCount || 0,
     path: clickData.path || '',
     'data-*': clickData['data-*'] || null,
-    
+
     pageUrl: clickData.pageUrl || 'Unknown',
     pageTitle: clickData.pageTitle || '',
     time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'}),
     timestamp: Date.now()
   };
-  
+
   state.capturedClicks.unshift(newClick);
-  
-  // Keep only last 500 clicks
+
   if (state.capturedClicks.length > 500) {
     state.capturedClicks = state.capturedClicks.slice(0, 500);
   }
-  
+
   saveClicks();
 }
 
@@ -565,7 +524,7 @@ function downloadByDocumentId(documentId, pageUrl) {
 
 async function downloadAllFiles() {
   setDownloadStatus('Download in progress: preparing files...', 'info');
-  
+
   chrome.tabs.query({active: true, currentWindow: true}, async function(tabs) {
     if (!tabs || !tabs[0]) {
       setDownloadStatus('No active tab found', 'error');
@@ -577,21 +536,21 @@ async function downloadAllFiles() {
       setDownloadStatus('Unable to initialize Filevine helper. Please refresh the page and try again.', 'error');
       return;
     }
-    
+
     chrome.tabs.sendMessage(tabs[0].id, {
       type: 'DOWNLOAD_ALL_FILES'
     }, function(response) {
       if (chrome.runtime.lastError) {
         setDownloadStatus(`Download failed: ${chrome.runtime.lastError.message}. Please refresh the page.`, 'error');
         return;
-      }     
+      }
 
       if (!response) return;
       if (response.ok === false) {
         setDownloadStatus(`Download failed: ${response.error || 'Unknown error'}`, 'error');
         return;
       }
-      
+
       setDownloadStatus('Download completed successfully!', 'success');
       setTimeout(() => {
         const downloadStatus = document.getElementById('downloadStatus');
@@ -606,7 +565,7 @@ function exportData() {
     alert('No clicks to export');
     return;
   }
-  
+
   const csvData = [
     ['Type', 'Text', 'Tag', 'Classes', 'ID', 'Href', 'Time', 'Page URL'],
     ...state.capturedClicks.map(click => [
@@ -620,7 +579,7 @@ function exportData() {
       click.pageUrl
     ])
   ].map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
-  
+
   const blob = new Blob([csvData], {type: 'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -629,12 +588,70 @@ function exportData() {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-URL.revokeObjectURL(url);
+  URL.revokeObjectURL(url);
 }
 
-// ============================================
-// SYNC FILES FOR DEMAND NOTE
-// ============================================
+async function openDemandNoteDetail(noteId) {
+  state.currentDemandNoteId = noteId;
+
+  const detailEl = document.getElementById('demandNoteDetail');
+  if (detailEl) {
+    detailEl.innerHTML = `
+      <div class="detail-view">
+        <div style="font-size:13px; color:#64748b;">Loading details...</div>
+      </div>
+    `;
+  }
+  setActiveView('detail');
+
+  try {
+    const data = await getDemandNoteDetail(noteId);
+    console.log('Demand note detail response:', data);
+    const note =
+      data?.note ||
+      data?.demandNote ||
+      (data && data.id ? data : null) ||
+      data?.data?.note ||
+      data?.data?.demandNote ||
+      data?.data ||
+      null;
+    const documentsRaw =
+      data?.documents ||
+      data?.files ||
+      data?.data?.documents ||
+      data?.data?.files ||
+      [];
+    const documents = Array.isArray(documentsRaw) ? documentsRaw : [];
+    if (!note) {
+      throw new Error('Demand note not found');
+    }
+
+    detailEl.innerHTML = `
+      <div class="detail-view">
+        <h3 style="margin-bottom: 12px; color:#1e293b;">${escapeHtml(note.title || 'Untitled Demand Note')}</h3>
+        <div style="display:grid; gap:10px; font-size:13px; color:#475569;">
+          <div><strong>Status:</strong> ${escapeHtml(note.status || '-')}</div>
+          <div><strong>Client:</strong> ${escapeHtml(note.clientName || '-')}</div>
+          <div><strong>Total Amount:</strong> ${formatAmount(note.totalAmount)}</div>
+          <div><strong>Reference:</strong> ${escapeHtml(note.referenceNumber || '-')}</div>
+          <div><strong>Due Date:</strong> ${formatDate(note.dueDate)}</div>
+          <div><strong>Updated:</strong> ${formatDate(note.updatedAt)}</div>
+          <div><strong>Description:</strong><br>${escapeHtml(note.description || '-')}</div>
+        </div>
+        ${renderDocumentsSection(documents)}
+      </div>
+    `;
+  } catch (error) {
+    console.error('Error loading demand note detail:', error);
+    if (detailEl) {
+      detailEl.innerHTML = `
+        <div class="detail-view">
+          <div style="font-size:13px; color:#b91c1c;">${escapeHtml(error.message || 'Failed to load detail')}</div>
+        </div>
+      `;
+    }
+  }
+}
 
 async function syncFilesForDemandNote(demandNoteId) {
   if (!demandNoteId) {
@@ -679,14 +696,12 @@ async function syncFilesForDemandNote(demandNoteId) {
 
     setDetailSyncStatus('Downloading Medical Provider Records from Filevine...', 'info');
 
-    // Request downloads from content script - specifically for medical provider records
     const downloadResult = await new Promise((resolve, reject) => {
       chrome.tabs.sendMessage(
         syncTab.id,
-        { 
+        {
           type: 'SYNC_MEDICAL_RECORDS',
-          demandNoteId: demandNoteId,
-          authToken: state.authToken
+          demandNoteId: demandNoteId
         },
         (response) => {
           if (chrome.runtime.lastError) {
@@ -698,15 +713,12 @@ async function syncFilesForDemandNote(demandNoteId) {
       );
     });
 
-    // Handle case where no response received or error occurred
     if (!downloadResult || downloadResult.ok === false) {
-      // If there's a specific error message, show it
       if (downloadResult?.error) {
         setDetailSyncStatus(`Download failed: ${downloadResult.error}`, 'error');
-    } else {
-      // Provide more helpful message instead of "Unknown error"
-      setDetailSyncStatus('Download failed. Please refresh the page and try again.', 'error');
-    }
+      } else {
+        setDetailSyncStatus('Download failed. Please refresh the page and try again.', 'error');
+      }
       setDetailSyncing(false);
       return;
     }
@@ -714,7 +726,6 @@ async function syncFilesForDemandNote(demandNoteId) {
     const totalDownloaded = downloadResult.succeeded || 0;
     const totalSkipped = downloadResult.skipped || 0;
 
-    // If no files were downloaded but we got a valid response, check if files were already synced
     if (totalDownloaded === 0 && totalSkipped > 0) {
       setDetailSyncStatus(`All Medical Provider Records already synced (${totalSkipped} files skipped)`, 'success');
       setDetailSyncing(false);
@@ -733,22 +744,19 @@ async function syncFilesForDemandNote(demandNoteId) {
 
     setDetailSyncStatus(`Uploading ${totalDownloaded} Medical Provider Records to database...`, 'info');
 
-    // Now upload the files to the backend
     const uploadedFiles = downloadResult.uploadedFiles || [];
-    
+
     if (uploadedFiles.length > 0) {
       setDetailSyncStatus(`Successfully uploaded ${uploadedFiles.length} Medical Provider Records!`, 'success');
     } else {
       setDetailSyncStatus(`Downloaded ${totalDownloaded} files. Upload to backend pending.`, 'success');
     }
-    
-    // Refresh the detail view
+
     await openDemandNoteDetail(demandNoteId);
 
     setTimeout(() => {
       hideDetailSyncStatus();
     }, 5000);
-
   } catch (error) {
     console.error('Sync error:', error);
     setDetailSyncStatus(`Sync failed: ${error.message}`, 'error');
@@ -756,10 +764,6 @@ async function syncFilesForDemandNote(demandNoteId) {
     setDetailSyncing(false);
   }
 }
-
-// ============================================
-// EVENT LISTENERS SETUP
-// ============================================
 
 function setupEventListeners() {
   document.querySelectorAll('.nav-tab').forEach((tab) => {
@@ -769,17 +773,17 @@ function setupEventListeners() {
   const logoutBtn = document.getElementById('logoutBtn');
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
+      await signOutSession();
       await chrome.storage.local.remove(['authToken', 'user', 'isAuthenticated', 'authExpiry', 'capturedClicks']);
       window.location.href = 'login.html';
     });
   }
 
-  // Refresh button - reload demand notes data
   const refreshBtn = document.getElementById('refreshBtn');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
       refreshBtn.classList.add('refreshing');
-      await fetchDemandNotes(true);
+      await loadDemandNotes(true);
       refreshBtn.classList.remove('refreshing');
     });
   }
@@ -801,13 +805,11 @@ function setupEventListeners() {
     });
   });
 
-  // Download All button
   const downloadAllBtn = document.getElementById('downloadAllBtn');
   if (downloadAllBtn) {
     downloadAllBtn.addEventListener('click', downloadAllFiles);
   }
 
-  // Export button
   const exportBtn = document.getElementById('exportBtn');
   if (exportBtn) {
     exportBtn.addEventListener('click', exportData);
@@ -823,20 +825,18 @@ function setupEventListeners() {
     });
   }
 
-const backBtn = document.getElementById('backToDemandNotes');
+  const backBtn = document.getElementById('backToDemandNotes');
   if (backBtn) {
     backBtn.addEventListener('click', () => setActiveView('demand-notes'));
   }
 
-// Sync Now button in detail view
   const syncNowBtn = document.getElementById('syncNowBtn');
   if (syncNowBtn) {
     syncNowBtn.addEventListener('click', () => {
       console.log('=== Sync Now button clicked ===');
       console.log('currentDemandNoteId:', state.currentDemandNoteId);
-      console.log('authToken exists:', !!state.authToken);
-      //Checks if a demand note is currently selected 
-      
+      console.log('Session expected for sync.');
+
       if (state.currentDemandNoteId) {
         syncFilesForDemandNote(state.currentDemandNoteId);
       } else {
@@ -849,57 +849,69 @@ const backBtn = document.getElementById('backToDemandNotes');
   }
 }
 
-function populateUser(user) {
-  const nameEl = document.getElementById('userName');
-  const roleEl = document.getElementById('userRole');
-  const avatarEl = document.getElementById('userAvatar');
+async function loadDemandNotes(full = true) {
+  state.loading = true;
+  setSyncing(true);
+  setSyncStatus('Loading demand notes...');
 
-  if (nameEl) {
-    const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
-    nameEl.textContent = fullName || user?.email || 'User';
-  }
-
-  if (roleEl) {
-    const roleText = Array.isArray(user?.roles) && user.roles.length > 0 ? user.roles.join(', ') : 'Authenticated User';
-    roleEl.textContent = roleText;
-  }
-
-  if (avatarEl) {
-    avatarEl.textContent = getInitials(user);
+  try {
+    const data = await getDemandNotes(full);
+    state.demandNotes = Array.isArray(data.notes) ? data.notes : [];
+    renderDemandNotes();
+    setSyncStatus(`Loaded ${state.demandNotes.length} demand notes`, 'success');
+    setTimeout(() => hideSyncStatus(), 1200);
+  } catch (error) {
+    console.error('Error loading demand notes:', error);
+    setSyncStatus(error.message || 'Failed to load demand notes', 'error');
+  } finally {
+    state.loading = false;
+    setSyncing(false);
   }
 }
 
 async function init() {
-  const authData = await chrome.storage.local.get(['authToken', 'user', 'isAuthenticated', 'authExpiry', 'capturedClicks']);
-  
-  if (!authData.isAuthenticated || !authData.authToken || authData.authExpiry <= Date.now()) {
+  const authData = await chrome.storage.local.get(['capturedClicks']);
+  const session = await getSession();
+
+  if (!session?.user) {
     window.location.href = 'login.html';
     return;
   }
 
-  state.authToken = authData.authToken;
-  state.user = authData.user || null;
-  
-  // Load captured clicks
+  const rawUser = session.user || {};
+  const normalizedUser = {
+    ...rawUser,
+    firstName: rawUser.firstName || (rawUser.name ? rawUser.name.split(' ')[0] : ''),
+    lastName: rawUser.lastName || (rawUser.name ? rawUser.name.split(' ').slice(1).join(' ') : '')
+  };
+
+  state.user = normalizedUser;
+
   if (authData.capturedClicks) {
     state.capturedClicks = authData.capturedClicks;
   }
+
+  const expiry = session.expires ? Date.parse(session.expires) : Date.now() + (24 * 60 * 60 * 1000);
+  await chrome.storage.local.set({
+    user: normalizedUser,
+    isAuthenticated: true,
+    authExpiry: expiry
+  });
 
   populateUser(state.user);
   setupEventListeners();
   updateTime();
   setInterval(updateTime, 1000);
   setActiveView('demand-notes');
-  await fetchDemandNotes(true);
+  await loadDemandNotes(true);
 
-  // Set up Chrome message listener for download status
   chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     console.log('Message received in popup:', message);
-    
+
     if (message.type === 'CLICK_CAPTURED') {
       addClick(message.data);
     }
-    
+
     if (message.type === 'CLICKS_UPDATED') {
       state.capturedClicks = message.clicks;
     }
@@ -907,7 +919,7 @@ async function init() {
     if (message.type === 'DOWNLOAD_STATUS') {
       handleDownloadStatusMessage(message);
     }
-    
+
     return true;
   });
 }

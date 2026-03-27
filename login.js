@@ -8,7 +8,52 @@ document.addEventListener('DOMContentLoaded', function() {
     const togglePassword = document.getElementById('togglePassword');
 
     // API URL - change this to your deployed URL in production
-    const API_URL = 'http://localhost:3001'; // Using port 3001
+    const API_URL = 'http://localhost:3000'; // Using port 3000 (Next.js app)
+
+    async function getSession() {
+        try {
+            const response = await fetch(`${API_URL}/api/auth/session`, {
+                method: 'GET',
+                credentials: 'include'
+            });
+            if (!response.ok) return null;
+            const data = await response.json().catch(() => null);
+            if (!data || !data.user) return null;
+            return data;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    async function signInWithCredentials(email, password) {
+        const csrfRes = await fetch(`${API_URL}/api/auth/csrf`, {
+            method: 'GET',
+            credentials: 'include'
+        });
+        const csrfData = await csrfRes.json().catch(() => null);
+        const csrfToken = csrfData?.csrfToken;
+        if (!csrfToken) {
+            throw new Error('Unable to start sign-in. Please refresh and try again.');
+        }
+
+        const body = new URLSearchParams({
+            csrfToken,
+            email,
+            password,
+            callbackUrl: `${API_URL}/`
+        });
+
+        const response = await fetch(`${API_URL}/api/auth/callback/credentials`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body
+        });
+
+        return response.ok || response.status === 302;
+    }
 
     // Toggle password visibility
     togglePassword.addEventListener('click', function() {
@@ -42,63 +87,64 @@ document.addEventListener('DOMContentLoaded', function() {
         setLoading(true);
         
         try {
-            const response = await fetch(`${API_URL}/api/auth/login`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ email, password })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Authentication failed');
+            const signInOk = await signInWithCredentials(email, password);
+            if (!signInOk) {
+                throw new Error('Authentication failed');
             }
 
-            // Store auth data
+            const session = await getSession();
+            if (!session?.user) {
+                throw new Error('Login failed. Please check your credentials.');
+            }
+
+            const rawUser = session.user || {};
+            const normalizedUser = {
+                ...rawUser,
+                firstName: rawUser.firstName || (rawUser.name ? rawUser.name.split(' ')[0] : ''),
+                lastName: rawUser.lastName || (rawUser.name ? rawUser.name.split(' ').slice(1).join(' ') : '')
+            };
+
+            const expiry = session.expires ? Date.parse(session.expires) : Date.now() + (24 * 60 * 60 * 1000);
+
             await chrome.storage.local.set({
-                authToken: data.token,
-                user: data.user,
+                user: normalizedUser,
                 isAuthenticated: true,
-                authExpiry: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
+                authExpiry: expiry
             });
 
             console.log('Login successful, redirecting...');
-            
             window.location.href = 'popup.html';
 
         } catch (error) {
             console.error('Login error:', error);
-            showError(error.message);
+            showError(error.message || 'Login failed');
             setLoading(false);
         }
     });
 
     async function checkExistingAuth() {
         try {
-            const result = await chrome.storage.local.get(['authToken', 'authExpiry', 'isAuthenticated']);
-            
-            if (result.isAuthenticated && result.authToken && result.authExpiry > Date.now()) {
-                // Verify token with backend
-                const response = await fetch(`${API_URL}/api/auth/verify`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ token: result.authToken })
-                });
-
-                const data = await response.json();
-                
-                if (data.valid) {
-                    console.log('Already authenticated, redirecting...');
-                    window.location.href = 'popup.html';
-                } else {
-                    // Token invalid, clear storage
-                    await chrome.storage.local.remove(['authToken', 'user', 'isAuthenticated', 'authExpiry']);
-                }
+            const session = await getSession();
+            if (!session?.user) {
+                return;
             }
+
+            const rawUser = session.user || {};
+            const normalizedUser = {
+                ...rawUser,
+                firstName: rawUser.firstName || (rawUser.name ? rawUser.name.split(' ')[0] : ''),
+                lastName: rawUser.lastName || (rawUser.name ? rawUser.name.split(' ').slice(1).join(' ') : '')
+            };
+            const expiry = session.expires ? Date.parse(session.expires) : Date.now() + (24 * 60 * 60 * 1000);
+
+            await chrome.storage.local.set({
+                user: normalizedUser,
+                isAuthenticated: true,
+                authExpiry: expiry
+            });
+
+            console.log('Already authenticated, redirecting...');
+            window.location.href = 'popup.html';
         } catch (error) {
             console.log('Auth verification failed:', error);
         }

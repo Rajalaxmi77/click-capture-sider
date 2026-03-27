@@ -157,12 +157,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         case 'UPLOAD_FILE_TO_BACKEND':
             (async () => {
                 try {
-                    const { authToken, blob, fileName, demandNoteId, fileCategory, fileUrl, apiOrigin, projectId, applicationType, sourceDocumentId } = message || {};
-
-                    if (!authToken) {
-                        sendResponse({ success: false, error: 'Missing auth token' });
-                        return;
-                    }
+                    const { blob, fileName, demandNoteId, fileCategory, fileUrl, apiOrigin, projectId, applicationType, sourceDocumentId } = message || {};
 
                     if (!demandNoteId) {
                         sendResponse({ success: false, error: 'Missing demand note ID' });
@@ -212,9 +207,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
 
                     const response = await fetch(`${API_URL}/api/upload`, {
                         method: 'POST',
-                        headers: {
-                            Authorization: `Bearer ${authToken}`
-                        },
+                        credentials: 'include',
                         body: formData
                     });
 
@@ -244,11 +237,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         case 'GET_DEMAND_NOTE_FILES':
             (async () => {
                 try {
-                    const { authToken, demandNoteId } = message || {};
-                    if (!authToken) {
-                        sendResponse({ success: false, error: 'Missing auth token' });
-                        return;
-                    }
+                    const { demandNoteId } = message || {};
                     if (!demandNoteId) {
                         sendResponse({ success: false, error: 'Missing demand note ID' });
                         return;
@@ -256,9 +245,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
 
                     const response = await fetch(`${API_URL}/api/demand-notes/${encodeURIComponent(String(demandNoteId))}/files`, {
                         method: 'GET',
-                        headers: {
-                            Authorization: `Bearer ${authToken}`
-                        }
+                        credentials: 'include'
                     });
 
                     if (!response.ok) {

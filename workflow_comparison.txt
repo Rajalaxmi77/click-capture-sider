@@ -1,0 +1,41 @@
+DIFFERENCES BETWEEN PREVIOUS FLOW (summary_of_combined_files.txt) AND CURRENT FLOW (SUMMARY.md)
+
+1) Backend architecture
+- Previous: Separate Express backend (backend/server.js) with Prisma, JWT auth, and custom REST endpoints.
+- Current: Single Next.js backend with NextAuth session cookies; no separate backend server.
+
+2) Authentication model
+- Previous: Custom JWT issued by /api/auth/login, stored in chrome.storage.local, sent as Authorization: Bearer <token>.
+- Current: NextAuth session cookies; extension uses /api/auth/csrf + /api/auth/callback/credentials, then checks /api/auth/session. All API calls use credentials: 'include'.
+
+3) Session storage
+- Previous: authToken + authExpiry + isAuthenticated stored in chrome.storage.local, used for every API call.
+- Current: Session is server-side (NextAuth); extension stores only user + authExpiry for UI, but requests rely on cookies.
+
+4) API response shape
+- Previous: /api/demand-notes/:id returned { note, documents } from Express.
+- Current: /api/demand-notes/:id returns the note object directly and uses files/documents arrays; popup.js supports multiple shapes.
+
+5) Upload path
+- Previous: Background script uploaded to Express /api/upload with Bearer token.
+- Current: Background script uploads to Next.js /api/upload with cookies (credentials: 'include').
+
+6) Overall maintenance
+- Previous: Duplicate logic between Next.js app and backend/server.js.
+- Current: Single source of truth in Next.js; no duplicated backend code.
+
+WHICH APPROACH IS BETTER AND WHY
+
+Recommended: Current flow (Next.js + NextAuth session cookies).
+
+Why it is better:
+- Single backend to maintain: no duplicate code or schema drift.
+- Auth is centralized: NextAuth handles sessions, CSRF, and providers consistently with your app.
+- Fewer moving parts: extension talks directly to the real backend; simpler deployment and debugging.
+- Security: session cookies reduce exposure of long-lived JWTs stored in extension storage.
+
+Tradeoffs to be aware of:
+- Cookie policies must allow extension access (SameSite/CORS settings may need adjustment for dev).
+- Extension requests must always include credentials: 'include'.
+
+Bottom line: The current Next.js + NextAuth approach is the better long-term solution because it reduces duplication and keeps the extension aligned with your production backend.

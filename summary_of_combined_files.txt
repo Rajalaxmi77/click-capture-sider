@@ -1,0 +1,672 @@
+﻿1. LOGIN FLOW
+==============
+Login Page (login.html )
+// User enters credentials and clicks login
+// The login page sends credentials to backend API
+
+How Login Works
+---------------
+javascript
+// In login.html (hypothetical):
+// 1. User submits email/password
+// 2. Backend validates and returns JWT token
+// 3. Token gets stored in Chrome storage
+
+// In popup.js - init() function checks if user is logged in:
+async function init() {
+  // Retrieve stored authentication data from Chrome's local storage
+  const authData = await chrome.storage.local.get([
+    'authToken',      // The JWT token from backend
+    'user',           // User info (name, email, roles)
+    'isAuthenticated', // Boolean flag if logged in
+    'authExpiry'      // When token expires
+  ]);
+  
+  // Check if user is authenticated AND token hasn't expired
+  if (!authData.isAuthenticated || 
+      !authData.authToken || 
+      authData.authExpiry <= Date.now()) {
+    // Not logged in or token expired - redirect to login page
+    window.location.href = 'login.html';
+    return;
+  }
+
+  // Store token and user info in state object for use throughout app
+  state.authToken = authData.authToken;
+  state.user = authData.user || null;
+  
+  // Display user name and avatar in header
+  populateUser(state.user);
+  
+  // Set up all button click handlers
+  setupEventListeners();
+  
+  // Start the clock display that updates every second
+  updateTime();
+  setInterval(updateTime, 1000);
+  
+  // Show the Demand Notes tab by default
+  setActiveView('demand-notes');
+  
+  // Load demand notes from backend API
+  await fetchDemandNotes(true);
+}
+
+
+2. FETCH DEMAND NOTES LIST
+============================
+When popup opens, it loads all demand notes
+javascript
+async function fetchDemandNotes(full = true) {
+  // Check if we have an auth token before making request
+  if (!state.authToken) return;
+
+  // Show loading state - disable buttons, show spinner
+  state.loading = true;
+  setSyncing(true);  // Disables sync button, shows spinning icon
+  setSyncStatus('Loading demand notes...');
+
+  try {
+    // MAKE API CALL TO BACKEND
+    // GET /api/demand-notes?full=true
+    const response = await fetch(`${API_URL}/api/demand-notes?full=${full ? 'true' : 'false'}`, {
+      headers: {
+        // Include JWT token for authentication
+        Authorization: `Bearer ${state.authToken}`,
+      },
+    });
+
+    // If response is not OK (status 200-299), throw error
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || 'Failed to load demand notes');
+    }
+
+    // Parse JSON response from server
+    const data = await response.json();
+    
+    // Store demand notes in state (array of note objects)
+    // Each note has: id, title, status, clientName, totalAmount, etc.
+    state.demandNotes = Array.isArray(data.notes) ? data.notes : [];
+    
+    // Re-render the UI with the new data
+    renderDemandNotes();
+    
+    // Show success message for 1.2 seconds
+    setSyncStatus(`Loaded ${state.demandNotes.length} demand notes`, 'success');
+    setTimeout(() => hideSyncStatus(), 1200);
+    
+  } catch (error) {
+    // Show error message if something went wrong
+    console.error('Error loading demand notes:', error);
+    setSyncStatus(error.message || 'Failed to load demand notes', 'error');
+    
+  } finally {
+    // Always clear loading state when done (success or error)
+    state.loading = false;
+    setSyncing(false);
+  }
+}
+How Demand Notes are Displayed
+------------------------------
+javascript
+function renderDemandNotes() {
+  const listEl = document.getElementById('demandNotesList');
+  if (!listEl) return;
+
+  // FILTERING LOGIC:
+  // - Filter by status (all, draft, pending, approved)
+  // - Filter by search text (title, client name, reference number)
+  const filtered = state.demandNotes.filter((note) => {
+    // Check status filter
+    const matchesFilter = state.activeFilter === 'all' || 
+      String(note.status || '').toLowerCase() === state.activeFilter;
+    if (!matchesFilter) return false;
+
+    // Check search text filter
+    if (!state.searchText) return true;
+    const q = state.searchText.toLowerCase();
+    return (
+      String(note.title || '').toLowerCase().includes(q) ||
+      String(note.clientName || '').toLowerCase().includes(q) ||
+      String(note.referenceNumber || '').toLowerCase().includes(q)
+    );
+  });
+
+  // If no notes match filters, show empty state message
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="empty-state">No demand notes found</div>`;
+    return;
+  }
+
+  // Generate HTML for each demand note card
+  listEl.innerHTML = filtered.map((note) => {
+    // Escape HTML to prevent XSS attacks (user could type <script>)
+    const safeTitle = escapeHtml(note.title || 'Untitled Demand Note');
+    const safeClient = escapeHtml(note.clientName || '-');
+    const safeStatus = escapeHtml(note.status || 'draft');
+    const safePreview = escapeHtml(note.description || 'No description');
+    
+    // Create card HTML with data-note-id attribute for click detection
+    return `
+      <div class="demand-note-card" data-note-id="${escapeHtml(note.id)}">
+        <div class="demand-note-header">
+          <div class="demand-note-title">${safeTitle}</div>
+          <span class="demand-note-status ${getStatusClass(note.status)}">${safeStatus}</span>
+        </div>
+        <div class="demand-note-meta">
+          <span><i class="fas fa-calendar"></i> ${formatDate(note.updatedAt)}</span>
+          <span><i class="fas fa-dollar-sign"></i> ${formatAmount(note.totalAmount)}</span>
+        </div>
+        <div class="demand-note-client"><i class="fas fa-user"></i> ${safeClient}</div>
+        <div class="demand-note-preview">${safePreview.slice(0, 180)}...</div>
+      </div>
+    `;
+  }).join(''); // join() combines all card HTML strings into one string
+}
+
+3. FETCH DEMAND NOTE DETAILS & DOCUMENTS
+========================================
+
+When user clicks a demand note card
+-------------------------------------
+javascript
+// Event listener setup in setupEventListeners()
+const listEl = document.getElementById('demandNotesList');
+if (listEl) {
+  // Event delegation - listen on parent, check if clicked element is a card
+  listEl.addEventListener('click', (event) => {
+    // Find the closest .demand-note-card element (in case click was inside card)
+    const card = event.target.closest('.demand-note-card');
+    if (!card) return;
+    
+    // Get note ID from data attribute
+    const noteId = card.getAttribute('data-note-id');
+    if (noteId) void openDemandNoteDetail(noteId);  // void = ignore promise
+  });
+}
+
+async function openDemandNoteDetail(noteId) {
+  // Store current note ID for sync button to use later
+  state.currentDemandNoteId = noteId;
+  
+  // Show loading message while fetching
+  const detailEl = document.getElementById('demandNoteDetail');
+  if (detailEl) {
+    detailEl.innerHTML = `<div>Loading details...</div>`;
+  }
+  
+  // Switch to detail view (hides list, shows detail panel)
+  setActiveView('detail');
+
+  try {
+    // FETCH DETAILED DATA FROM BACKEND
+    // GET /api/demand-notes/{noteId}
+    const data = await fetchDemandNoteDetail(noteId);
+    
+    // Extract note data and documents array from response
+    const note = data?.note;
+    const documents = Array.isArray(data?.documents) ? data.documents : [];
+    
+    // Build HTML for detail view
+    detailEl.innerHTML = `
+      <div class="detail-view">
+        <h3>${escapeHtml(note.title)}</h3>
+        <div>Status: ${escapeHtml(note.status)}</div>
+        <div>Client: ${escapeHtml(note.clientName)}</div>
+        <div>Total: ${formatAmount(note.totalAmount)}</div>
+        <div>Reference: ${escapeHtml(note.referenceNumber)}</div>
+        <div>Due Date: ${formatDate(note.dueDate)}</div>
+        <div>Description: ${escapeHtml(note.description)}</div>
+        
+        <!-- Documents section -->
+        ${renderDocumentsSection(documents)}
+      </div>
+    `;
+  } catch (error) {
+    // Show error if fetch fails
+    detailEl.innerHTML = `<div>Error: ${error.message}</div>`;
+  }
+}
+
+function renderDocumentsSection(documents) {
+  // If no documents, show message
+  if (!documents || documents.length === 0) {
+    return `<div>No documents uploaded for this demand note.</div>`;
+  }
+
+  // Generate HTML for each document
+  const rows = documents.map((doc) => {
+    const fileName = escapeHtml(doc.fileName || 'Unnamed file');
+    const fileType = escapeHtml(doc.fileType || '-');
+    const createdAt = formatDate(doc.createdAt);
+    const size = Number(doc.size || 0);
+    const sizeText = size > 0 ? `${Math.round(size / 1024)} KB` : '-';
+    const fileUrl = escapeHtml(doc.fileUrl || '');
+
+    return `
+      <div style="border:1px solid #e2e8f0; padding:10px;">
+        <div><strong>${fileName}</strong></div>
+        <div>Type: ${fileType} | Size: ${sizeText} | Uploaded: ${createdAt}</div>
+        ${fileUrl ? `<a href="${fileUrl}" target="_blank">Open file</a>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  return `<h4>Documents (${documents.length})</h4>${rows}`;
+}
+
+4. SYNC FILES FROM FILEVINE
+===========================
+
+When user clicks "Sync Now" button in detail view
+---------------------------------------------------
+javascript
+// Event listener setup for Sync Now button
+const syncNowBtn = document.getElementById('syncNowBtn');
+if (syncNowBtn) {
+  syncNowBtn.addEventListener('click', () => {
+    // Check if a demand note is currently selected
+    if (state.currentDemandNoteId) {
+      // Start sync process for this note
+      syncFilesForDemandNote(state.currentDemandNoteId);
+    } else {
+      setDetailSyncStatus('No demand note selected', 'error');
+    }
+  });
+}
+
+async function syncFilesForDemandNote(demandNoteId) {
+  // Show sync status message
+  setDetailSyncStatus('Checking for Filevine page...', 'info');
+  setDetailSyncing(true);  // Disable button, show spinner
+
+  try {
+    // STEP 1: Find a Filevine tab in Chrome
+    // Query all tabs in current window
+    const syncTab = await new Promise((resolve) => {
+      chrome.tabs.query({ currentWindow: true }, (tabs) => {
+        // Check if URL contains "filevine" or "vinesign"
+        const isFilevineTab = (tab) => {
+          const tabUrl = String(tab?.url || '').toLowerCase();
+          return tabUrl.includes('filevine') || tabUrl.includes('vinesign');
+        };
+
+        // First try active tab
+        const activeTab = tabs.find((tab) => tab.active);
+        if (activeTab && isFilevineTab(activeTab)) {
+          resolve(activeTab);
+          return;
+        }
+
+        // If no active Filevine tab, find any Filevine tab
+        const filevineTab = tabs.find(isFilevineTab);
+        resolve(filevineTab || null);
+      });
+    });
+
+    // If no Filevine tab found, show error
+    if (!syncTab || !syncTab.id) {
+      setDetailSyncStatus('Open a Filevine project tab, then click Sync Now', 'error');
+      setDetailSyncing(false);
+      return;
+    }
+
+    // STEP 2: Inject content script into Filevine tab
+    // Content script contains functions to interact with Filevine's DOM/APIs
+    const injected = await ensureContentScript(syncTab.id);
+    if (!injected) {
+      setDetailSyncStatus('Unable to initialize Filevine helper', 'error');
+      setDetailSyncing(false);
+      return;
+    }
+
+    // STEP 3: Send message to content script to download medical records
+    setDetailSyncStatus('Downloading Medical Provider Records from Filevine...', 'info');
+
+    const downloadResult = await new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(
+        syncTab.id,
+        { 
+          type: 'SYNC_MEDICAL_RECORDS',  // Message type content script listens for
+          demandNoteId: demandNoteId,     // Which note to attach files to
+          authToken: state.authToken      // Auth token for backend upload
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(response);
+          }
+        }
+      );
+    });
+
+    // Check if download was successful
+    if (!downloadResult || downloadResult.ok === false) {
+      setDetailSyncStatus(`Download failed: ${downloadResult?.error || 'Unknown error'}`, 'error');
+      setDetailSyncing(false);
+      return;
+    }
+
+    // Show success message
+    const total = downloadResult.succeeded || 0;
+    setDetailSyncStatus(`Successfully synced ${total} Medical Provider Records!`, 'success');
+    
+    // Refresh the detail view to show newly added documents
+    await openDemandNoteDetail(demandNoteId);
+
+    // Hide status message after 5 seconds
+    setTimeout(() => {
+      hideDetailSyncStatus();
+    }, 5000);
+
+  } catch (error) {
+    console.error('Sync error:', error);
+    setDetailSyncStatus(`Sync failed: ${error.message}`, 'error');
+  } finally {
+    setDetailSyncing(false);  // Re-enable button
+  }
+}
+
+
+5. CONTENT SCRIPT - SYNC MEDICAL RECORDS
+========================================
+
+This runs in the Filevine tab context
+javascript
+// content.js - listens for messages from popup
+chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
+  
+  if (message.type === 'SYNC_MEDICAL_RECORDS') {
+    console.log('SYNC_MEDICAL_RECORDS received, demandNoteId:', message.demandNoteId);
+    
+    // Only run in main frame (not iframes)
+    if (window.top !== window) {
+      return;
+    }
+
+    // STEP 1: Get Project ID from current URL
+    // Filevine URLs look like: https://app.filevine.com/#/project/12345/docs/
+    const projectId = String(getProjectIdFromUrl(window.location.href) || '').trim();
+    if (!projectId) {
+      sendResponse({ ok: false, error: 'Missing project ID in current URL' });
+      return true;
+    }
+
+    // STEP 2: Call Filevine's internal API to get all documents
+    (async () => {
+      try {
+        // Build API URL: /api/docs/project/{projectId}
+        const docsMenuUrl = buildProjectDocsMenuUrl(projectId, window.location.href);
+        
+        // Fetch all documents from Filevine
+        const fromDocsMenuApi = await getDocumentsMenuProjectDocIds(projectId, docsMenuUrl);
+        
+        if (fromDocsMenuApi.ids.length === 0) {
+          sendResponse({ ok: false, error: 'No documents found in Filevine' });
+          return;
+        }
+
+        // STEP 3: Filter for Medical Provider Records only
+        const medicalRecordsIds = [];
+        const medicalRecordsMeta = {};
+        
+        fromDocsMenuApi.documents.forEach((doc) => {
+          // Check document name/label for medical keywords
+          const lowerSpan = String(
+            doc.searchText || `${doc.spanName || ''} ${doc.fileName || ''}`
+          ).toLowerCase();
+          
+          if (lowerSpan.includes('medical') || 
+              lowerSpan.includes('provider') || 
+              lowerSpan.includes('record')) {
+            medicalRecordsIds.push(doc.id);
+            medicalRecordsMeta[doc.id] = doc;
+          }
+        });
+
+        console.log(`Found ${medicalRecordsIds.length} Medical Provider Records`);
+
+        // STEP 4: Check which files already exist in backend
+        const existingFilesResult = await getDemandNoteFilesFromBackend(
+          message.authToken, 
+          message.demandNoteId
+        );
+        
+        const uploadedNameSet = new Set(
+          (existingFilesResult?.files || [])
+            .map((f) => normalizeFileNameForMatch(f?.fileName))
+            .filter(Boolean)
+        );
+
+        // STEP 5: Download each medical record and upload to backend
+        let succeeded = 0;
+        let failed = 0;
+        let skipped = 0;
+
+        for (let i = 0; i < medicalRecordsIds.length; i++) {
+          const docId = medicalRecordsIds[i];
+          const docMeta = medicalRecordsMeta[docId];
+          const expectedFileName = docMeta?.fileName || `document-${docId}.pdf`;
+          const normalizedExpectedName = normalizeFileNameForMatch(expectedFileName);
+
+          // Skip if already uploaded
+          if (uploadedNameSet.has(normalizedExpectedName)) {
+            skipped++;
+            continue;
+          }
+
+          // Download document from Filevine
+          const downloadResult = await downloadDocumentById(
+            docId,
+            window.location.href,
+            docMeta,
+            projectId,
+            { saveToDisk: false }  // Don't save to disk, just get URL
+          );
+
+          if (downloadResult?.ok) {
+            // Upload to our backend
+            const uploadResult = await uploadFileToBackend(
+              message.authToken,
+              null,  // blob will be fetched from downloadUrl
+              expectedFileName,
+              message.demandNoteId,
+              'medical',  // Category
+              downloadResult.downloadUrl,
+              apiOrigin,
+              {
+                projectId,
+                applicationType: 'filevine',
+                sourceDocumentId: docId
+              }
+            );
+
+            if (uploadResult?.success) {
+              succeeded++;
+              uploadedNameSet.add(normalizedExpectedName);
+            } else {
+              failed++;
+            }
+          } else {
+            failed++;
+          }
+        }
+
+        // Return summary to popup
+        sendResponse({
+          ok: succeeded > 0,
+          succeeded,
+          failed,
+          skipped,
+          uploadedFiles: []
+        });
+
+      } catch (error) {
+        console.error('SYNC_MEDICAL_RECORDS error:', error);
+        sendResponse({ ok: false, error: error.message });
+      }
+    })();
+    
+    return true;  // Keep message channel open for async response
+  }
+});
+
+How Filevine API Calls Work
+----------------------------
+javascript
+async function getDocumentsMenuProjectDocIds(projectId, pageUrl) {
+  // Get origin: https://app.filevine.com or https://app.vinesign.com
+  const origin = getOriginFromPageUrl(pageUrl);
+  
+  // First API call: Get folder structure
+  const folderTreeUrl = `${origin}/api/projects/${projectId}/limitedProjectFolderTree`;
+  
+  // Second API call: Get documents in project
+  const docsByProjectUrl = `${origin}/api/docs/project/${projectId}`;
+  
+  try {
+    // Step 1: Get folder tree to understand document organization
+    const treeRes = await fetch(folderTreeUrl, {
+      method: 'POST',
+      credentials: 'include',  // Include cookies for authentication
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})  // Empty body
+    });
+    
+    let folderNameById = {};
+    if (treeRes.ok) {
+      const treePayload = await treeRes.json();
+      // Map folder IDs to folder names for context
+      folderNameById = extractFolderNameById(treePayload);
+    }
+    
+    // Step 2: Get all documents in project
+    const res = await fetch(docsByProjectUrl, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})  // Can include folder IDs to filter
+    });
+    
+    if (res.ok) {
+      const docsPayload = await res.json();
+      const rows = extractDocumentRowsFromPayload(docsPayload);
+      
+      // Build document objects with metadata
+      const documents = rows.map((row) => ({
+        id: row.id,
+        fileName: row.filename || row.fileName,
+        spanName: pickSpanNameFromDocumentRow(row, folderNameById),
+        searchText: `${row.spanName} ${row.filename}`.toLowerCase()
+      }));
+      
+      return {
+        ids: documents.map(doc => doc.id),
+        documents: documents
+      };
+    }
+  } catch (error) {
+    console.error('Error fetching documents:', error);
+  }
+  
+  return { ids: [], documents: [] };
+}
+Download Document Process
+--------------------------
+javascript
+async function downloadDocumentById(documentId, pageUrl, documentMeta, projectId, options = {}) {
+  const origin = getOriginFromPageUrl(pageUrl);
+  
+  // Step 1: Get document details
+  const detailsUrl = `${origin}/api/docs/${documentId}/details`;
+  const res = await fetch(detailsUrl, {
+    method: 'GET',
+    credentials: 'include',
+    headers: { 'Accept': 'application/json' }
+  });
+  
+  if (!res.ok) {
+    return { ok: false, error: `Details API failed (${res.status})` };
+  }
+  
+  const payload = await res.json();
+  
+  // Step 2: Get the actual document download URL
+  const downloadUrl = `${origin}/api/docs/download/${documentId}`;
+  const downloadRes = await fetch(downloadUrl, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({})
+  });
+  
+  if (!downloadRes.ok) {
+    return { ok: false, error: `Download API failed (${downloadRes.status})` };
+  }
+  
+  // Step 3: Extract file URL from response
+  const contentType = downloadRes.headers.get('content-type') || '';
+  let fileUrl = downloadUrl;
+  
+  if (contentType.includes('application/json')) {
+    // Response is JSON with download info
+    const downloadPayload = await downloadRes.json();
+    const extractedUrls = new Set();
+    extractUrlsFromObject(downloadPayload, extractedUrls);
+    fileUrl = chooseBestFileUrl(extractedUrls, documentId);
+  } else {
+    // Response is the file itself
+    const blob = await downloadRes.blob();
+    fileUrl = await blobToDataUrl(blob);
+  }
+  
+  return {
+    ok: true,
+    downloadUrl: fileUrl,
+    resolvedDocumentId: documentId
+  };
+}
+
+
+6. UPLOAD TO BACKEND
+=====================
+
+File upload from content script to background
+javascript
+async function uploadFileToBackend(authToken, blob, fileName, demandNoteId, fileCategory, fileUrl, apiOrigin, options = {}) {
+  try {
+    // Send message to background script to handle upload
+    const result = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        type: 'UPLOAD_FILE_TO_BACKEND',
+        authToken: authToken,           // JWT for authentication
+        blob: blob,                     // File content (if already have blob)
+        fileName: fileName,             // Name of file
+        demandNoteId: demandNoteId,     // Which demand note to attach to
+        fileCategory: fileCategory,     // 'medical' or other
+        fileUrl: fileUrl,               // URL to fetch file from (if no blob)
+        apiOrigin: apiOrigin,           // Backend URL
+        projectId: options.projectId,
+        applicationType: options.applicationType,
+        sourceDocumentId: options.sourceDocumentId
+      }, (response) => {
+        resolve(response || { success: false, error: 'No response' });
+      });
+    });
+    
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}

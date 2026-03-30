@@ -7,8 +7,6 @@ const state = {
   activeFilter: 'all',
   searchText: '',
   loading: false,
-  capturedClicks: [],
-  isCapturing: true,
   currentFilter: 'all',
   currentDemandNoteId: null
 };
@@ -314,61 +312,6 @@ function populateUser(user) {
   }
 }
 
-function loadClicks() {
-  chrome.storage.local.get(['capturedClicks'], function(result) {
-    console.log('Loaded clicks from storage:', result.capturedClicks?.length || 0);
-    if (result.capturedClicks) {
-      state.capturedClicks = result.capturedClicks;
-    }
-  });
-}
-
-function saveClicks() {
-  chrome.storage.local.set({capturedClicks: state.capturedClicks}, function() {
-    console.log('Clicks saved to storage:', state.capturedClicks.length);
-  });
-}
-
-function addClick(clickData) {
-  if (!state.isCapturing) return;
-
-  const newClick = {
-    type: clickData.type,
-    text: clickData.text || 'No text',
-    tagName: clickData.tagName,
-    classes: clickData.classes || '',
-    id: clickData.id || '',
-    href: clickData.href || '',
-    downloadUrl: clickData.downloadUrl || clickData.href || '',
-    documentId: clickData.documentId || '',
-    src: clickData.src || '',
-    alt: clickData.alt || '',
-    title: clickData.title || '',
-    name: clickData.name || '',
-    value: clickData.value || '',
-    role: clickData.role || '',
-    'aria-label': clickData['aria-label'] || '',
-
-    position: clickData.position || null,
-    parent: clickData.parent || null,
-    childrenCount: clickData.childrenCount || 0,
-    path: clickData.path || '',
-    'data-*': clickData['data-*'] || null,
-
-    pageUrl: clickData.pageUrl || 'Unknown',
-    pageTitle: clickData.pageTitle || '',
-    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'}),
-    timestamp: Date.now()
-  };
-
-  state.capturedClicks.unshift(newClick);
-
-  if (state.capturedClicks.length > 500) {
-    state.capturedClicks = state.capturedClicks.slice(0, 500);
-  }
-
-  saveClicks();
-}
 
 function buildDownloadFailedAlert(errorMessage) {
   const detail = errorMessage || 'Unknown error';
@@ -560,36 +503,6 @@ async function downloadAllFiles() {
   });
 }
 
-function exportData() {
-  if (state.capturedClicks.length === 0) {
-    alert('No clicks to export');
-    return;
-  }
-
-  const csvData = [
-    ['Type', 'Text', 'Tag', 'Classes', 'ID', 'Href', 'Time', 'Page URL'],
-    ...state.capturedClicks.map(click => [
-      click.type,
-      click.text,
-      click.tagName,
-      click.classes,
-      click.id || '',
-      click.href || '',
-      click.time,
-      click.pageUrl
-    ])
-  ].map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
-
-  const blob = new Blob([csvData], {type: 'text/csv;charset=utf-8;'});
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `clicks_${new Date().toISOString().slice(0,10)}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
 
 async function openDemandNoteDetail(noteId) {
   state.currentDemandNoteId = noteId;
@@ -774,7 +687,7 @@ function setupEventListeners() {
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
       await signOutSession();
-      await chrome.storage.local.remove(['authToken', 'user', 'isAuthenticated', 'authExpiry', 'capturedClicks']);
+      await chrome.storage.local.remove(['authToken', 'user', 'isAuthenticated', 'authExpiry']);
       window.location.href = 'login.html';
     });
   }
@@ -810,10 +723,6 @@ function setupEventListeners() {
     downloadAllBtn.addEventListener('click', downloadAllFiles);
   }
 
-  const exportBtn = document.getElementById('exportBtn');
-  if (exportBtn) {
-    exportBtn.addEventListener('click', exportData);
-  }
 
   const listEl = document.getElementById('demandNotesList');
   if (listEl) {
@@ -870,7 +779,7 @@ async function loadDemandNotes(full = true) {
 }
 
 async function init() {
-  const authData = await chrome.storage.local.get(['capturedClicks']);
+  const authData = await chrome.storage.local.get([]);
   const session = await getSession();
 
   if (!session?.user) {
@@ -887,9 +796,6 @@ async function init() {
 
   state.user = normalizedUser;
 
-  if (authData.capturedClicks) {
-    state.capturedClicks = authData.capturedClicks;
-  }
 
   const expiry = session.expires ? Date.parse(session.expires) : Date.now() + (24 * 60 * 60 * 1000);
   await chrome.storage.local.set({
@@ -907,14 +813,6 @@ async function init() {
 
   chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     console.log('Message received in popup:', message);
-
-    if (message.type === 'CLICK_CAPTURED') {
-      addClick(message.data);
-    }
-
-    if (message.type === 'CLICKS_UPDATED') {
-      state.capturedClicks = message.clicks;
-    }
 
     if (message.type === 'DOWNLOAD_STATUS') {
       handleDownloadStatusMessage(message);

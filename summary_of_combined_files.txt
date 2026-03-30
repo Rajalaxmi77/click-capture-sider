@@ -1,4 +1,6 @@
-﻿1. LOGIN FLOW
+﻿//uses separate backend server.js and jwt token
+
+1. LOGIN FLOW
 ==============
 Login Page (login.html )
 // User enters credentials and clicks login

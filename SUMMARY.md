@@ -49,7 +49,7 @@ const session = await getSession();
 if (!session?.user) {
   window.location.href = 'login.html';
   return;
-}
+} 
 ```
 
 ### 3) Fetch Demand Notes (List)
@@ -139,3 +139,41 @@ credentials: 'include'
 ---
 
 If you want this summary to include any **new endpoints**, **schema details**, or a **diagram**, tell me and I’ll add it.
+
+Complete Call Order Summary:
+============================
+
+DOMContentLoaded (login.html)
+    └─> checkExistingAuth()
+        └─> getSession()
+
+DOMContentLoaded (popup.html)
+    └─> init()
+        ├─> getSession()
+        ├─> populateUser()
+        ├─> setupEventListeners() (registers handlers)
+        ├─> updateTime()
+        ├─> setActiveView()
+        └─> loadDemandNotes()
+            ├─> getDemandNotes()
+            ├─> renderDemandNotes()
+            └─> setSyncStatus() / hideSyncStatus()
+
+User Interactions (triggers):
+    Click Login Button:
+        └─> signInWithCredentials()
+            └─> getSession()
+    Click Sync Button:
+        └─> syncFilesForDemandNote()
+            ├─> ensureContentScript()
+            └─> openDemandNoteDetail()
+    Click Demand Note Card:
+        └─> openDemandNoteDetail()
+            └─> getDemandNoteDetail()
+    Click Logout:
+        └─> signOutSession()
+    Click Download All:
+        └─> downloadAllFiles()
+            └─> ensureContentScript()
+    Search/Filter:
+        └─> renderDemandNotes()

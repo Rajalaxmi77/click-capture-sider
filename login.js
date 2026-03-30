@@ -25,36 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    async function signInWithCredentials(email, password) {
-        const csrfRes = await fetch(`${API_URL}/api/auth/csrf`, {
-            method: 'GET',
-            credentials: 'include'
-        });
-        const csrfData = await csrfRes.json().catch(() => null);
-        const csrfToken = csrfData?.csrfToken;
-        if (!csrfToken) {
-            throw new Error('Unable to start sign-in. Please refresh and try again.');
-        }
-
-        const body = new URLSearchParams({
-            csrfToken,
-            email,
-            password,
-            callbackUrl: `${API_URL}/`
-        });
-
-        const response = await fetch(`${API_URL}/api/auth/callback/credentials`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body
-        });
-
-        return response.ok || response.status === 302;
-    }
-
+    
     // Toggle password visibility
     togglePassword.addEventListener('click', function() {
         const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
@@ -121,6 +92,37 @@ document.addEventListener('DOMContentLoaded', function() {
             setLoading(false);
         }
     });
+    
+
+    async function signInWithCredentials(email, password) {
+        const csrfRes = await fetch(`${API_URL}/api/auth/csrf`, {
+            method: 'GET',
+            credentials: 'include'
+        });
+        const csrfData = await csrfRes.json().catch(() => null);
+        const csrfToken = csrfData?.csrfToken;
+        if (!csrfToken) {
+            throw new Error('Unable to start sign-in. Please refresh and try again.');
+        }
+
+        const body = new URLSearchParams({
+            csrfToken,
+            email,
+            password,
+            callbackUrl: `${API_URL}/`
+        });
+
+        const response = await fetch(`${API_URL}/api/auth/callback/credentials`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body
+        });
+
+        return response.ok || response.status === 302;
+    }
 
     async function checkExistingAuth() {
         try {

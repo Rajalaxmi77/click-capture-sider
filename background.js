@@ -2,34 +2,50 @@ console.log('Background script loaded');
 
 const API_URL = 'http://localhost:3000';
 
-async function configureSidePanel() {
-    if (!chrome.sidePanel || !chrome.sidePanel.setPanelBehavior) {
-        console.warn('Side Panel API is not fully available in this browser version.');
-        return;
-    }
+function isAllowedUrl(url) {
+    if (!url) return false;
+    if (url.startsWith('http://localhost:3000/')) return true;
+    if (url.startsWith('https://') && url.includes('.filevine.com/')) return true;
+    return false;
+}
+
+async function ensureFloatingWidget(tabId, tabUrl) {
+    if (!tabId || !chrome.scripting) return false;
+    if (!isAllowedUrl(tabUrl)) return false;
 
     try {
-        await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-        console.log('Side panel behavior configured: open on extension icon click');
+        await chrome.scripting.insertCSS({
+            target: { tabId },
+            files: ['floating-widget.css']
+        });
+
+        await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ['floating-widget.js']
+        });
+
+        return true;
     } catch (error) {
-        console.error('Failed to configure side panel behavior:', error);
+        console.error('Failed to inject floating widget:', error);
+        return false;
     }
 }
 
-// Configure on worker startup and after install/update
-configureSidePanel();
-
-// Load clicks from storage on startup
-chrome.storage.local.get([], function() {});
-
-// Fallback for browsers that support sidePanel.open but don't honor panel behavior
 chrome.action.onClicked.addListener(async (tab) => {
-    if (!tab || !tab.id || !chrome.sidePanel || !chrome.sidePanel.open) return;
+    if (!tab || !tab.id) return;
+    if (!isAllowedUrl(tab.url || '')) return;
 
     try {
-        await chrome.sidePanel.open({ tabId: tab.id });
+        await chrome.tabs.sendMessage(tab.id, { type: 'LCS_TOGGLE_WIDGET' });
     } catch (error) {
-        console.error('Failed to open side panel on action click:', error);
+        const injected = await ensureFloatingWidget(tab.id, tab.url || '');
+        if (!injected) return;
+
+        try {
+            await chrome.tabs.sendMessage(tab.id, { type: 'LCS_TOGGLE_WIDGET' });
+        } catch (err) {
+            console.error('Failed to toggle widget after injection:', err);
+        }
     }
 });
 
@@ -186,8 +202,6 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
 // Handle extension installation
 chrome.runtime.onInstalled.addListener(function(details) {
     console.log('Extension installed/updated:', details.reason);
-
-    configureSidePanel();
 
     chrome.storage.local.get([], function() {});
 });

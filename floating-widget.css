@@ -1,0 +1,219 @@
+/* Floating Widget Container */
+.legasys-floating-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 999999;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Floating Button */
+.legasys-floating-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+  color: white;
+  font-size: 24px;
+}
+
+.legasys-floating-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* Overlay (background dim) */
+/* .legasys-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999998;
+  animation: legasysFadeIn 0.2s ease;
+} */
+
+/* Widget Panel */
+.legasys-widget-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 30vw;
+  min-width: 320px;
+  max-width: 560px;
+  height: 100vh;
+  background: #f8fafc;
+  border-radius: 0;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: legasysSlideUp 0.3s ease;
+  z-index: 999999;
+}
+
+.legasys-widget-panel.studio-mode {
+  width: 70vw;
+  min-width: 420px;
+  max-width: none;
+}
+
+/* Widget Header */
+.legasys-widget-header {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  color: rgb(229, 235, 228);
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.legasys-widget-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.legasys-widget-header h3 i {
+  margin-right: 8px;
+}
+
+.legasys-widget-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legasys-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 12px;
+  cursor: pointer;
+  min-height: 28px;
+}
+
+.legasys-mode-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.legasys-mode-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #e2e8f0;
+}
+
+.legasys-mode-label i {
+  font-size: 12px;
+}
+
+.legasys-toggle-switch {
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(203, 213, 225, 0.45);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  box-sizing: border-box;
+  transition: background 0.2s ease;
+}
+
+.legasys-toggle-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.35);
+  transform: translateX(0);
+  transition: transform 0.2s ease;
+}
+
+.legasys-mode-toggle.studio .legasys-toggle-switch {
+  background: rgba(56, 189, 248, 0.85);
+}
+
+.legasys-mode-toggle.studio .legasys-toggle-thumb {
+  transform: translateX(16px);
+}
+
+.legasys-close-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px;
+  transition: color 0.2s;
+}
+
+.legasys-close-btn:hover {
+  color: white;
+}
+
+/* Widget Content - contains iframe */
+.legasys-widget-content {
+  flex: 1;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.legasys-widget-content iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* Animations */
+@keyframes legasysSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes legasysFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Responsive for mobile */
+@media (max-width: 480px) {
+  .legasys-widget-panel {
+    width: 100vw;
+    min-width: 0;
+    max-width: none;
+    right: 0;
+    left: 0;
+    bottom: 0;
+  }
+
+  .legasys-widget-panel.studio-mode {
+    width: 100vw;
+  }
+}

@@ -1,45 +1,41 @@
 {
   "manifest_version": 3,
-  "name": "Click Capture Sider",
-  "version": "1.0",
-  "description": "Captures all clicks and displays details in sidebar",
+  "name": "Legasys Quick Access",
+  "version": "1.0.0",
+  "description": "Quick access to Legasys features",
   "permissions": [
-    "activeTab",
     "storage",
-    "scripting",
-    "sidePanel",
-    "downloads"
+    "downloads",
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
-    "<all_urls>",
-    "http://localhost:3000/*"
-  ],
-  "background": {
-    "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_start",
-      "all_frames": true
-    }
+    "http://localhost:3000/*",
+    "https://*.filevine.com/*",
+    "https://*.vinesign.com/*"
   ],
   "action": {
-    "default_title": "Click Capture",
-    "default_popup": "login.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
   },
-  "side_panel": {
-    "default_path": "popup.html"
+  "background": {
+    "service_worker": "background.js"
   },
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  }
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:3000/*", "https://*.filevine.com/*"],
+      "js": ["floating-widget.js"],
+      "css": ["floating-widget.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["popup.html", "popup.js", "popup.css", "floating-widget.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

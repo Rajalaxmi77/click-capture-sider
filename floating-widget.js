@@ -1,9 +1,20 @@
 console.log('Legasys Floating Widget loaded');
 
+const WIDGET_INSTANCE_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+window.__lcsWidgetActiveId = WIDGET_INSTANCE_ID;
+
 let isOpen = false;
 let widgetPanel = null;
 let overlay = null;
 let isStudioMode = false;
+
+function cleanupExistingWidget() {
+  document.querySelectorAll('.legasys-floating-container, .legasys-widget-panel, .legasys-overlay')
+    .forEach((el) => el.remove());
+  widgetPanel = null;
+  overlay = null;
+  isOpen = false;
+}
 
 // Create the floating toggle button
 function createFloatingButton() {
@@ -127,6 +138,11 @@ function closeWidget() {
 function initFloatingWidget() {
   loadFontAwesome();
   
+  cleanupExistingWidget();
+  if (document.querySelector('.legasys-floating-container')) {
+    return;
+  }
+
   // Create container and button
   const container = document.createElement('div');
   container.className = 'legasys-floating-container';
@@ -143,6 +159,7 @@ if (document.readyState === 'loading') {
 }
 
 chrome.runtime.onMessage.addListener((message) => {
+  if (window.__lcsWidgetActiveId !== WIDGET_INSTANCE_ID) return;
   if (!message || !message.type) return;
   if (message.type === 'LCS_TOGGLE_WIDGET') {
     if (!document.querySelector('.legasys-floating-container')) {

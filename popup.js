@@ -219,6 +219,7 @@ function renderDemandNotes() {
     );
   });
 
+  // 
   if (filtered.length === 0) {
     listEl.innerHTML = `
       <div class="empty-state">
@@ -545,8 +546,7 @@ async function openDemandNoteDetail(noteId) {
         <div style="display:grid; gap:10px; font-size:13px; color:#475569;">
           <div><strong>Status:</strong> ${escapeHtml(note.status || '-')}</div>
           <div><strong>Client:</strong> ${escapeHtml(note.clientName || '-')}</div>
-          <div><strong>Total Amount:</strong> ${formatAmount(note.totalAmount)}</div>
-          <div><strong>Reference:</strong> ${escapeHtml(note.referenceNumber || '-')}</div>
+          
           <div><strong>Due Date:</strong> ${formatDate(note.dueDate)}</div>
           <div><strong>Updated:</strong> ${formatDate(note.updatedAt)}</div>
           <div><strong>Description:</strong><br>${escapeHtml(note.description || '-')}</div>
@@ -766,7 +766,7 @@ async function loadDemandNotes(full = true) {
   try {
     const data = await getDemandNotes(full);
     state.demandNotes = Array.isArray(data.notes) ? data.notes : [];
-    renderDemandNotes();
+    renderDemandNotes(); // Render after setting state to ensure UI reflects the latest data 
     setSyncStatus(`Loaded ${state.demandNotes.length} demand notes`, 'success');
     setTimeout(() => hideSyncStatus(), 1200);
   } catch (error) {
@@ -778,6 +778,7 @@ async function loadDemandNotes(full = true) {
   }
 }
 
+// Initial load and authentication check
 async function init() {
   const authData = await chrome.storage.local.get([]);
   const session = await getSession();

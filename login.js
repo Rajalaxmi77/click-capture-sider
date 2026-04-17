@@ -146,7 +146,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
 
             console.log('Already authenticated, redirecting...');
-            window.location.href = 'popup.html';
+            window.location.href = 'popup.html'; //redirect to popup if already authenticated
         } catch (error) {
             console.log('Auth verification failed:', error);
         }

@@ -138,7 +138,6 @@ credentials: 'include'
 
 ---
 
-If you want this summary to include any **new endpoints**, **schema details**, or a **diagram**, tell me and I’ll add it.
 
 Complete Call Order Summary:
 ============================

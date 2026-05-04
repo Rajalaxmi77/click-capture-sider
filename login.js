@@ -10,6 +10,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // API URL - change this to your deployed URL in production
     const API_URL = 'http://localhost:3000'; // Using port 3000 (Next.js app)
 
+    // Check if already authenticated
+    checkExistingAuth();
+
     async function getSession() {
         try {
             const response = await fetch(`${API_URL}/api/auth/session`, {
@@ -34,9 +37,7 @@ document.addEventListener('DOMContentLoaded', function() {
         this.classList.toggle('fa-eye-slash');
     });
 
-    // Check if already authenticated
-    checkExistingAuth();
-
+    
     loginForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         
@@ -146,6 +147,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
 
             console.log('Already authenticated, redirecting...');
+            
             window.location.href = 'popup.html'; //redirect to popup if already authenticated
         } catch (error) {
             console.log('Auth verification failed:', error);

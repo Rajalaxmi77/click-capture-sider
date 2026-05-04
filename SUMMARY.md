@@ -38,6 +38,11 @@ const session = await fetch(`${API_URL}/api/auth/session`, {
 
 ### 2) Session Check (Popup Init)
 
+document.addEventListener('DOMContentLoaded', () => {
+  init()
+});
+- Everything starts from init()
+
 - When the popup opens, it calls `/api/auth/session`.
 - If no active session, it redirects to `login.html`.
 - If a session exists, it loads demand notes and sets up listeners.

@@ -49,17 +49,59 @@ async function signOutSession() {
   }
 }
 
+function extractDemandNotes(payload) {
+  const candidates = [
+    payload?.notes,
+    payload?.demandNotes,
+    payload?.data?.notes,
+    payload?.data?.demandNotes,
+    payload?.data
+  ];
+
+  return candidates.find(Array.isArray) || [];
+}
+
 async function getDemandNotes(full = true) {
-  const response = await fetch(`${API_URL}/api/demand-notes?full=${full ? 'true' : 'false'}`, {
-    credentials: 'include'
-  });
+  const limit = 5;
+  let offset = 0;
+  const notes = [];
 
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to load demand notes');
+  while (true) {
+    const params = new URLSearchParams({
+      full: full ? 'true' : 'false',
+      limit: String(limit),
+      offset: String(offset)
+    });
+
+    const response = await fetch(`${API_URL}/api/demand-notes?${params.toString()}`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || 'Failed to load demand notes');
+    }
+
+    const payload = await response.json();
+    const pageNotes = extractDemandNotes(payload);
+    notes.push(...pageNotes);
+
+    const total = Number(
+      payload?.total ??
+      payload?.count ??
+      payload?.pagination?.total ??
+      payload?.meta?.total ??
+      payload?.data?.total ??
+      payload?.data?.pagination?.total ??
+      payload?.data?.meta?.total
+    );
+
+    if (pageNotes.length < limit || (Number.isFinite(total) && notes.length >= total)) {
+      return { ...payload, notes };
+    }
+
+    offset += limit;
   }
-
-  return response.json();
 }
 
 async function getDemandNoteDetail(noteId) {
